@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+/*
+ * Skumetra design tokens (Tailwind v4 `@theme`).
+ * Every token below is available as a normal utility, e.g. `bg-canvas-tint`,
+ * `text-ink-soft`, `border-line`, `shadow-card-hover`. No tailwind.config file.
+ *
+ * Palette is deliberately restrained: one teal accent, near-black ink, quiet
+ * neutrals. Status colors (critical / high / medium / healthy) are never used
+ * alone — every status also carries an icon and a text label (see SeverityBadge).
+ */
+@theme {
+  /* ---- Semantic aliases required by the spec (§20) ---- */
+  --color-background: #ffffff;
+  --color-foreground: #12181a;
+  --color-muted-foreground: #5a6a6d;
+  --color-border: #e3e8e8;
+  --color-card: #ffffff;
+  --color-primary: #0b6e6e; /* primary teal */
+  --color-primary-hover: #084f4f; /* primary hover */
+  --color-focus-ring: #0b6e6e;
+
+  /* ---- Accent (teal) scale ---- */
+  --color-accent: #0b6e6e;
+  --color-accent-press: #084f4f;
+  --color-accent-deep: #0a5757;
+  --color-accent-mid: #14868a;
+  --color-accent-light: #3fa7a5;
+  --color-accent-lighter: #5cc0be;
+  --color-accent-lightest: #8ad6d3;
+  --color-accent-tint: #e8f2f2;
+  --color-accent-tint2: #eef5f5;
+  --color-accent-border: #d8e6e6;
+  --color-accent-border-strong: #cfe0e0;
+
+  /* ---- Ink (near-black typography) ---- */
+  --color-ink: #12181a;
+  --color-ink-strong: #0d1214;
+  --color-ink-body: #3c4b4e;
+  --color-ink-muted: #4b5c5f;
+  --color-ink-soft: #5a6a6d;
+  /* The three lightest neutrals are clamped to clear WCAG AA (4.5:1) on white and
+     on the tinted grounds while preserving the ramp (soft > softer > faint > faintest). */
+  --color-ink-softer: #5f6d70;
+  --color-ink-faint: #647274;
+  --color-ink-faintest: #687678;
+
+  /* ---- Lines / borders ---- */
+  --color-line: #e3e8e8;
+  --color-line-soft: #e9eded;
+  --color-line-softer: #edf1f1;
+  --color-line-row: #f1f4f4;
+  --color-line-strong: #dce4e4;
+  --color-line-input: #dde3e3;
+  --color-line-button: #d7dede;
+
+  /* ---- Canvas / surfaces ---- */
+  --color-canvas: #ffffff;
+  --color-canvas-tint: #f7fafa;
+  --color-canvas-subtle: #fbfcfc;
+
+  /* ---- Status (never color-only) ---- */
+  --color-sev-critical: #a4262c;
+  --color-sev-high: #9a5b00;
+  --color-sev-medium: #9a5b00;
+  --color-sev-healthy: #0b6e6e;
+  --color-sev-low: #4b5c5f;
+
+  --color-danger-bg: #fdf1f1;
+  --color-danger-border: #f0d4d4;
+  --color-danger-text: #7d1f24;
+  --color-danger-input: #d99a9a;
+
+  --color-warn-bg: #fdf6ec;
+  --color-warn-border: #f2e4cd;
+  --color-warn-text: #7a4800;
+
+  /* ---- On-dark text (footer / final CTA) ---- */
+  --color-on-dark-high: #a8b6b8;
+  --color-on-dark-mid: #8c9a9c;
+  --color-on-dark-low: #7f8f91;
+  --color-on-dark-faint: #768486;
+  --color-on-dark-link: #a8dedd;
+
+  /* ---- Type ---- */
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  /* ---- Radii ---- */
+  --radius-chip: 7px;
+  --radius-control: 8px;
+  --radius-note: 10px;
+  --radius-card: 12px;
+  --radius-frame: 14px;
+
+  /* ---- Shadows ---- */
+  --shadow-card-hover: 0 8px 24px -16px rgba(18, 24, 26, 0.22);
+  --shadow-frame: 0 1px 2px rgba(18, 24, 26, 0.04), 0 18px 40px -24px rgba(18, 24, 26, 0.16);
+  --shadow-frame-hero: 0 1px 2px rgba(18, 24, 26, 0.04), 0 18px 40px -20px rgba(18, 24, 26, 0.18);
+  --shadow-price: 0 1px 2px rgba(18, 24, 26, 0.04), 0 20px 44px -28px rgba(11, 110, 110, 0.35);
+
+  /* The reference design uses a single breakpoint at 900px. */
+  --breakpoint-lg: 900px;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 88px;
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a {
+    color: var(--color-accent);
+    /* Inline links are underlined so they are distinguishable by more than color
+       (WCAG 1.4.1). Nav, footer, and button links opt out with `no-underline`. */
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  a:hover {
+    color: var(--color-accent-press);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  h1,
+  h2,
+  h3,
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
