@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { ArrowLeft, Check } from 'lucide-react'
 import { SkumetraLogo } from '@/components/brand/skumetra-logo'
 import { PilotApplicationForm } from '@/components/pilot/pilot-application-form'
+import { PageViewTracker } from '@/components/analytics/page-view-tracker'
 
 export const metadata: Metadata = {
   title: 'Apply for the Founding Seller Pilot',
@@ -29,6 +30,7 @@ const asideIncluded = [
 export default function PilotPage() {
   return (
     <div className="flex min-h-screen flex-col bg-canvas-tint">
+      <PageViewTracker event="pilot_page_viewed" />
       <header className="border-b border-line-soft bg-canvas">
         <div className="mx-auto flex h-[68px] w-full max-w-[1080px] items-center gap-5 px-6">
           <SkumetraLogo href="/" size="sm" />

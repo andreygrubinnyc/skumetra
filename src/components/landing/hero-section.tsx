@@ -37,7 +37,12 @@ export function HeroSection() {
               Built for active Amazon sellers using supplier CSV or Excel files.
             </p>
           </div>
-          <DashboardPreview />
+          <div>
+            <DashboardPreview />
+            <p className="m-0 mt-3 text-center text-[12.5px] text-ink-faint">
+              Illustrative preview — fictional sample data, not a live account.
+            </p>
+          </div>
         </div>
       </Shell>
     </section>

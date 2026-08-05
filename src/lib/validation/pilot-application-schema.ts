@@ -55,9 +55,18 @@ const values = <T extends readonly { value: string }[]>(opts: T) =>
   opts.map((o) => o.value) as [string, ...string[]]
 
 export const pilotApplicationSchema = z.object({
-  name: z.string().trim().min(2, 'Please enter your full name.'),
-  email: z.string().trim().email('Please enter a valid email address.'),
-  business: z.string().trim().min(2, 'Please enter your business or store name.'),
+  name: z.string().trim().min(2, 'Please enter your full name.').max(200, 'Please shorten your name.'),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email('Please enter a valid email address.')
+    .max(254, 'Please shorten your email address.'),
+  business: z
+    .string()
+    .trim()
+    .min(2, 'Please enter your business or store name.')
+    .max(200, 'Please shorten your business or store name.'),
   selling: z.enum(values(SELLING_OPTIONS), { errorMap: () => ({ message: 'Please select one option.' }) }),
   listings: z.enum(values(LISTING_RANGES), { errorMap: () => ({ message: 'Please select a range.' }) }),
   suppliers: z.enum(values(SUPPLIER_COUNTS), {
@@ -71,6 +80,14 @@ export const pilotApplicationSchema = z.object({
     errorMap: () => ({ message: 'Please select one option.' }),
   }),
   comments: z.string().trim().max(2000, 'Please keep comments under 2000 characters.').optional(),
+  /**
+   * Honeypot — a real form field never presents this to sighted or assistive-
+   * technology users (see the hidden input in PilotApplicationForm). Bots
+   * that blindly fill every input in the DOM tend to fill this one too.
+   * Never validated as an error here; the server rejects silently when
+   * non-empty. Bounded only to cap payload size.
+   */
+  honeypot: z.string().max(200).optional(),
 })
 
 export type PilotApplicationInput = z.input<typeof pilotApplicationSchema>

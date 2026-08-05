@@ -29,6 +29,8 @@ export interface PilotApplication {
   problem: PrimaryProblem
   files: FileWillingness
   comments?: string
+  /** Honeypot — must be empty for a legitimate submission. See the schema for detail. */
+  honeypot?: string
 }
 
 /** Result returned by the submission adapter (see `lib/services/pilot-submission.ts`). */

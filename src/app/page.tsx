@@ -1,5 +1,6 @@
 import { SiteHeader } from '@/components/layout/site-header'
 import { SiteFooter } from '@/components/layout/site-footer'
+import { PageViewTracker } from '@/components/analytics/page-view-tracker'
 import { HeroSection } from '@/components/landing/hero-section'
 import { DetectionSection } from '@/components/landing/detection-section'
 import { HowItWorksSection } from '@/components/landing/how-it-works-section'
@@ -20,6 +21,7 @@ import { FinalCtaSection } from '@/components/landing/final-cta-section'
 export default function LandingPage() {
   return (
     <>
+      <PageViewTracker event="landing_page_viewed" />
       <SiteHeader />
       <main id="main-content">
         <HeroSection />

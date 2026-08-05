@@ -1,14 +1,18 @@
 import { FileSpreadsheet, Hand } from 'lucide-react'
-import { Section, Eyebrow, SectionTitle } from '@/components/ui/section'
+import { Section, Eyebrow, SectionTitle, Lead } from '@/components/ui/section'
 import { steps } from '@/data/content'
 
 export function HowItWorksSection() {
   return (
     <Section id="how-it-works" aria-labelledby="how-heading">
       <Eyebrow>How it works</Eyebrow>
-      <SectionTitle id="how-heading" className="mb-14 max-w-[22ch]">
+      <SectionTitle id="how-heading" className="mb-5 max-w-[22ch]">
         From supplier files to prioritized actions
       </SectionTitle>
+      <Lead className="mb-14 max-w-[64ch]">
+        This is the workflow Founding Seller Pilot participants will use once onboarded — file upload,
+        matching, and rule-based analysis are not yet available to try on this site.
+      </Lead>
 
       <ol className="m-0 mb-10 grid list-none grid-cols-1 gap-7 p-0 lg:grid-cols-4">
         {steps.map((s, i) => (

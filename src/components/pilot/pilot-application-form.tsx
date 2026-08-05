@@ -7,6 +7,7 @@ import { TriangleAlert, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { submitPilotApplication } from '@/lib/services/pilot-submission'
+import { track } from '@/lib/monitoring/analytics'
 import type { PilotApplication } from '@/types/pilot'
 import {
   pilotApplicationSchema,
@@ -67,6 +68,13 @@ export function PilotApplicationForm() {
   const [submitError, setSubmitError] = useState('')
   const [errorAttempt, setErrorAttempt] = useState(0)
   const summaryRef = useRef<HTMLDivElement>(null)
+  const startedRef = useRef(false)
+
+  function handleFormStarted() {
+    if (startedRef.current) return
+    startedRef.current = true
+    track('pilot_form_started')
+  }
 
   // Ref access belongs in an effect, not in the handleSubmit callbacks below —
   // this fires after every failed attempt (validation or submission), even if
@@ -98,15 +106,18 @@ export function PilotApplicationForm() {
       const result = await submitPilotApplication(values as PilotApplication)
       if (result.ok) {
         setStatus('success')
+        track('pilot_application_submitted')
       } else {
         setStatus('idle')
         setSubmitError(result.error)
         setErrorAttempt((n) => n + 1)
+        track('pilot_application_failed')
       }
     } catch {
       setStatus('idle')
       setSubmitError('Something went wrong sending your application. Please try again.')
       setErrorAttempt((n) => n + 1)
+      track('pilot_application_failed')
     }
   }
 
@@ -117,9 +128,18 @@ export function PilotApplicationForm() {
   return (
     <form
       onSubmit={handleSubmit(onValid, onInvalid)}
+      onFocus={handleFormStarted}
       noValidate
       className="rounded-frame border border-line bg-canvas p-[clamp(20px,3vw,32px)]"
     >
+      {/* Honeypot — invisible and unreachable for real users (aria-hidden,
+          off-screen, out of tab order), present for bots that blindly fill
+          every field. The server rejects silently when this is non-empty. */}
+      <div className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+        <label htmlFor="honeypot">Leave this field blank</label>
+        <input id="honeypot" type="text" tabIndex={-1} autoComplete="off" {...register('honeypot')} />
+      </div>
+
       {(showSummary || submitError) && (
         <div
           ref={summaryRef}
@@ -216,23 +236,18 @@ export function PilotApplicationForm() {
       <fieldset className="m-0 mb-7 border-0 p-0">
         <legend className={legendCls}>Your Amazon business</legend>
 
-        <fieldset className="m-0 mb-[18px] border-0 p-0">
+        <fieldset
+          className="m-0 mb-[18px] border-0 p-0"
+          aria-invalid={!!errors.selling || undefined}
+          aria-describedby={errors.selling ? 'selling-error' : undefined}
+        >
           <legend className="mb-2.5 block p-0 text-[14px] font-medium">
             Are you currently selling on Amazon US? {req}
           </legend>
-          <div
-            className="flex flex-wrap gap-2.5"
-            aria-describedby={errors.selling ? 'selling-error' : undefined}
-          >
+          <div className="flex flex-wrap gap-2.5">
             {SELLING_OPTIONS.map((o) => (
               <label key={o.value} className={radioPill}>
-                <input
-                  type="radio"
-                  value={o.value}
-                  className="m-0 accent-accent"
-                  aria-invalid={!!errors.selling || undefined}
-                  {...register('selling')}
-                />
+                <input type="radio" value={o.value} className="m-0 accent-accent" {...register('selling')} />
                 {o.label}
               </label>
             ))}
@@ -283,23 +298,18 @@ export function PilotApplicationForm() {
       <fieldset className="m-0 mb-7 border-0 p-0">
         <legend className={legendCls}>Pilot participation</legend>
 
-        <fieldset className="m-0 mb-[18px] border-0 p-0">
+        <fieldset
+          className="m-0 mb-[18px] border-0 p-0"
+          aria-invalid={!!errors.files || undefined}
+          aria-describedby={errors.files ? 'files-error' : undefined}
+        >
           <legend className="mb-2.5 block p-0 text-[14px] font-medium">
             Are you willing to provide real or anonymized Amazon and supplier files? {req}
           </legend>
-          <div
-            className="flex flex-wrap gap-2.5"
-            aria-describedby={errors.files ? 'files-error' : undefined}
-          >
+          <div className="flex flex-wrap gap-2.5">
             {FILE_WILLINGNESS_OPTIONS.map((o) => (
               <label key={o.value} className={radioPill}>
-                <input
-                  type="radio"
-                  value={o.value}
-                  className="m-0 accent-accent"
-                  aria-invalid={!!errors.files || undefined}
-                  {...register('files')}
-                />
+                <input type="radio" value={o.value} className="m-0 accent-accent" {...register('files')} />
                 {o.label}
               </label>
             ))}

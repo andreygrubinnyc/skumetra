@@ -7,7 +7,12 @@ import type { PilotSubmissionResult } from '@/types/pilot'
 const submitMock = vi.hoisted(() => vi.fn<() => Promise<PilotSubmissionResult>>())
 vi.mock('@/lib/services/pilot-submission', () => ({
   submitPilotApplication: submitMock,
-  SIMULATED_FAILURE_EMAIL: 'fail@skumetra.test',
+}))
+
+// Analytics is a no-op without NEXT_PUBLIC_POSTHOG_KEY, but stub it anyway so
+// tests don't depend on that being unset.
+vi.mock('@/lib/monitoring/analytics', () => ({
+  track: vi.fn(),
 }))
 
 import { PilotApplicationForm } from './pilot-application-form'

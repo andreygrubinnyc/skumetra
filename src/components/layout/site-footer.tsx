@@ -24,8 +24,6 @@ export function SiteFooter() {
                     key={l.href + l.label}
                     href={l.href}
                     className="text-[14px] text-on-dark-high no-underline transition-colors hover:text-white hover:no-underline"
-                    // TODO(launch): /privacy and /terms are placeholder routes — copy required before launch.
-                    title={l.placeholder ? 'Placeholder route — copy required before launch' : undefined}
                   >
                     {l.label}
                   </Link>

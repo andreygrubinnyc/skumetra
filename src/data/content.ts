@@ -32,9 +32,7 @@ export const navLinks = [
   { label: 'FAQ', href: '#faq' },
 ] as const
 
-export const footerColumns: Array<
-  Array<{ label: string; href: string; placeholder?: boolean }>
-> = [
+export const footerColumns: Array<Array<{ label: string; href: string }>> = [
   [
     { label: 'How It Works', href: '#how-it-works' },
     { label: 'Pilot', href: '#pilot' },
@@ -43,9 +41,8 @@ export const footerColumns: Array<
   ],
   [
     { label: 'Contact', href: 'mailto:hello@skumetra.com' },
-    // Both routes render a holding page. Real legal copy is required before launch.
-    { label: 'Privacy', href: '/privacy', placeholder: true },
-    { label: 'Terms', href: '/terms', placeholder: true },
+    { label: 'Privacy', href: '/privacy' },
+    { label: 'Terms', href: '/terms' },
   ],
 ]
 

@@ -58,9 +58,15 @@ test('5. pilot form rejects an invalid submission', async ({ page }) => {
   await expect(page).toHaveURL(/\/pilot$/)
 })
 
-test('6. pilot form accepts a valid simulated submission', async ({ page }) => {
+test('6. pilot form accepts a valid submission (real route handler, fallback store)', async ({ page }) => {
+  // Exercises the real POST /api/pilot-application route handler end-to-end.
+  // No Supabase env vars are configured for this test run, so the route
+  // falls back to its in-memory store — see
+  // src/lib/services/pilot-application-fallback-store.ts. A distinct email
+  // per run avoids colliding with the duplicate-detection window.
   await page.goto('/pilot')
   await fillValidPilotForm(page)
+  await page.getByLabel(/Email/i).fill(`jordan+${Date.now()}@northline.com`)
   await page.getByRole('button', { name: 'Apply for the Pilot' }).click()
   await expect(page.getByRole('heading', { name: /Thanks for applying/i })).toBeVisible()
   await expect(page.getByText(/contact qualified pilot participants/i)).toBeVisible()
@@ -78,12 +84,12 @@ test('7. mobile navigation opens and links work', async ({ page }) => {
   await expect(page).toHaveURL(/#faq$/)
 })
 
-test('8. privacy and terms placeholders load', async ({ page }) => {
+test('8. privacy and terms pages load with real content', async ({ page }) => {
   await page.goto('/privacy')
-  await expect(page.getByRole('heading', { name: 'Privacy Policy' })).toBeVisible()
-  await expect(page.getByText(/being finalized for the Founding Seller Pilot/i)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Privacy Policy', level: 1 })).toBeVisible()
+  await expect(page.getByText(/do not send us your Amazon password/i)).toBeVisible()
 
   await page.goto('/terms')
-  await expect(page.getByRole('heading', { name: 'Terms of Service' })).toBeVisible()
-  await expect(page.getByText(/being finalized for the Founding Seller Pilot/i)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Terms of Service', level: 1 })).toBeVisible()
+  await expect(page.getByText(/Skumetra does not guarantee/i)).toBeVisible()
 })
