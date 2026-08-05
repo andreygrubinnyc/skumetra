@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { TriangleAlert, Loader2 } from 'lucide-react'
@@ -65,7 +65,15 @@ type Status = 'idle' | 'submitting' | 'success'
 export function PilotApplicationForm() {
   const [status, setStatus] = useState<Status>('idle')
   const [submitError, setSubmitError] = useState('')
+  const [errorAttempt, setErrorAttempt] = useState(0)
   const summaryRef = useRef<HTMLDivElement>(null)
+
+  // Ref access belongs in an effect, not in the handleSubmit callbacks below —
+  // this fires after every failed attempt (validation or submission), even if
+  // the same fields are still invalid and formState.errors doesn't change.
+  useEffect(() => {
+    if (errorAttempt > 0) summaryRef.current?.focus()
+  }, [errorAttempt])
 
   const {
     register,
@@ -93,17 +101,17 @@ export function PilotApplicationForm() {
       } else {
         setStatus('idle')
         setSubmitError(result.error)
-        requestAnimationFrame(() => summaryRef.current?.focus())
+        setErrorAttempt((n) => n + 1)
       }
     } catch {
       setStatus('idle')
       setSubmitError('Something went wrong sending your application. Please try again.')
-      requestAnimationFrame(() => summaryRef.current?.focus())
+      setErrorAttempt((n) => n + 1)
     }
   }
 
   function onInvalid() {
-    requestAnimationFrame(() => summaryRef.current?.focus())
+    setErrorAttempt((n) => n + 1)
   }
 
   return (
