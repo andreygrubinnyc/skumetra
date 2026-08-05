@@ -161,3 +161,8 @@ vercel --prod # production (after approval)
 - **Legal pages are placeholders** — Privacy and Terms are not written.
 - **No analytics, error monitoring, spam protection, or rate limiting** yet.
 - Not connected to Amazon, Supabase, Stripe, or any external service.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The Skumetra name, logo, and brand are not
+covered by this license.
