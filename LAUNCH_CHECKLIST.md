@@ -40,16 +40,18 @@ application submissions while any 🔴 item is open.
       (`src/lib/monitoring/error-reporting.ts`), logs to console/Vercel function logs
       until real Sentry is wired up (needs `npm install @sentry/nextjs` + a DSN).
 - [ ] **Verify domain email** — `hello@skumetra.com` mailbox exists and is monitored.
-- [ ] **Set `NEXT_PUBLIC_SITE_URL`** to the production domain (canonical/OG/sitemap) —
-      already correct in `.env.example`; confirm it's set in the actual Vercel project.
-- [ ] **Set `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`** in the Vercel
-      project — without them, pilot submissions use the non-durable in-memory fallback.
-- [ ] **Run the Supabase migration** (`supabase/migrations/0001_create_pilot_applications.sql`)
-      against the real project before setting the above.
+- [x] **Set `NEXT_PUBLIC_SITE_URL`** to the production domain — confirmed set
+      in the Vercel project as of 2026-08-05.
+- [x] **Set `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`** in the
+      Vercel project — set and verified 2026-08-05 (a database-permission
+      issue briefly blocked real inserts after setting these; fixed same
+      day, see `docs/project/IMPLEMENTATION_HISTORY.md`).
+- [x] **Run the Supabase migration** (`supabase/migrations/0001_create_pilot_applications.sql`)
+      against the real project — applied 2026-08-05.
 - [ ] **Verify favicon files** — `favicon.svg`, `icon-32.png`, `icon-48.png`,
       `apple-touch-icon.png` render correctly in browser tabs and on iOS.
-- [ ] **Test mobile layout** at 375 / 768 / 1024 / 1440 (no horizontal scroll). 375px and
-      ~1600px desktop manually verified; 768/1024 not yet manually inspected.
+- [x] **Test mobile layout** at 375 / 768 / 1024 / ~1600 (no horizontal scroll) —
+      all four manually verified 2026-08-05 across `/`, `/pilot`, `/privacy`, `/terms`.
 - [ ] **Run an accessibility review** (keyboard nav, focus order, contrast, screen reader) —
       automated axe-core coverage exists (0 violations); manual screen-reader pass not done.
 - [ ] **Run a link check** (internal anchors, `mailto:`, footer links).
@@ -72,12 +74,18 @@ application submissions while any 🔴 item is open.
 
 ## 🚀 Deploy
 
-- [ ] **Deploy to a Vercel Preview** and smoke-test all routes — not yet done; needs
-      Andrey's Vercel account authentication (Claude cannot complete an interactive
-      login). GitHub Actions CI (`.github/workflows/ci.yml`) runs lint/typecheck/test/build
-      on every PR and push to `main`.
-- [x] `npm run build`, `npm run test`, and Playwright e2e all pass locally.
-- [ ] **Obtain approval before production launch**, then `vercel --prod`.
+- [x] **Deployed to Vercel production** — live at `https://skumetra.com`
+      (`https://www.skumetra.com` redirects to it; `https://skumetra.vercel.app`
+      also resolves). Verified 2026-08-05, including a real end-to-end pilot
+      submission against the live Supabase backend. GitHub Actions CI
+      (`.github/workflows/ci.yml`) runs lint/typecheck/test/build on every PR
+      and push to `main`.
+- [x] `npm run build`, `npm run test` (76/76), and `npm run test:e2e`
+      (24/24, including 8 axe-core accessibility checks, 0 violations) all
+      pass locally — re-verified fresh 2026-08-05.
+- [ ] **Obtain approval before treating this as a public marketing launch**
+      (as opposed to the current validation-stage availability) — the 🔴
+      blockers above (legal review, Turnstile) should be revisited first.
 
 ---
 
