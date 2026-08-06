@@ -45,3 +45,10 @@ alter table public.pilot_applications enable row level security;
 -- table is not readable or writable from the browser. Only the
 -- service-role key (used server-side only) can access it, since that
 -- key bypasses RLS.
+
+-- Bypassing RLS is separate from table-level grants: `service_role` still
+-- needs an explicit GRANT to touch this table at all. Some projects'
+-- default-privilege rules cover this automatically for tables created via
+-- the dashboard SQL Editor; this statement makes it explicit so the app
+-- works the same regardless of that project setting.
+grant select, insert, update, delete on public.pilot_applications to service_role;
