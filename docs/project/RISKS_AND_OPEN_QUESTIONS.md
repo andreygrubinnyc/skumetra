@@ -3,8 +3,8 @@
 **Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-05
 
 This is the public-safe subset. Internal risk detail (anything touching
-business strategy) lives in `docs/private/RISKS_AND_OPEN_QUESTIONS.md` on
-the local-only `docs/private` branch — see `PROJECT_INDEX.md`.
+business strategy) lives on the local-only `docs/private` branch, never
+pushed or merged — see `PROJECT_INDEX.md`.
 
 | ID | Risk or question | Type | Impact | Current evidence | Owner | Next action | Status |
 |---|---|---|---|---|---|---|---|

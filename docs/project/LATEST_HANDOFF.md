@@ -62,9 +62,9 @@ submissions after deployment.
 
 ## Known issues, risks, blockers
 
-See `RISKS_AND_OPEN_QUESTIONS.md` (public) and, if you have access,
-`docs/private/RISKS_AND_OPEN_QUESTIONS.md` (private branch, business
-context). Nothing is currently a hard blocker on technical work.
+See `RISKS_AND_OPEN_QUESTIONS.md` (public) and, if you have access, the
+local-only `docs/private` branch for business context. Nothing is
+currently a hard blocker on technical work.
 
 ## Exact next recommended task
 

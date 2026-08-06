@@ -61,10 +61,10 @@ noted in `CURRENT_STATUS.md`.
 
 These are business-sensitive by explicit decision (pricing hypotheses,
 numeric success targets, and kill criteria are not published here) — see
-`docs/private/VALIDATION_AND_PRICING.md` on the local-only `docs/private`
-branch. What **is** public: the Founding Seller Pilot terms are already
-live on `/pilot` and locked in the repo's `README.md` — do not change them
-without Andrey's approval.
+the local-only `docs/private` branch, never pushed or merged. What **is**
+public: the Founding Seller Pilot terms are already live on `/pilot` and
+locked in the repo's `README.md` — do not change them without Andrey's
+approval.
 
 ## Critical scope test
 

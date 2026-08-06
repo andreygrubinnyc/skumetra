@@ -19,8 +19,14 @@
 | Ending a substantial session | `LATEST_HANDOFF.md` — fully rewritten, not appended |
 
 **Before writing anything into a public file**, check it against the
-sensitive categories in `docs/private/README.md` (on the local-only
-`docs/private` branch). When uncertain, it goes there instead.
+sensitive categories below. When uncertain, it goes on the local-only
+`docs/private` branch instead (never pushed or merged).
+
+**Sensitive categories:** pricing hypotheses, validation targets,
+kill/pivot criteria, internal risks, decision-log entries with sensitive
+business context, security notes, private operating assumptions, internal
+planning material, confidential architecture or credential-handling
+details.
 
 ## Closeout checklist for material work
 

@@ -4,8 +4,8 @@
 
 Chronological. Superseded decisions are marked, not deleted. Business-
 sensitive decisions (pricing hypothesis specifics, validation-target
-figures) live in `docs/private/DECISION_LOG.md` on the local-only
-`docs/private` branch and are referenced here by ID only, without content.
+figures) live on the local-only `docs/private` branch, never pushed or
+merged, and are not reproduced or named here.
 
 | Date | Decision | Status | Reason | Evidence/source | Consequence |
 |---|---|---|---|---|---|
@@ -18,7 +18,7 @@ figures) live in `docs/private/DECISION_LOG.md` on the local-only
 | Date not verified | Restricted AI role (mapping/matching/explanation only, not decisions) | Accepted | Founding scope decision | `../../CLAUDE_PROJECT_PROMPT.md` | See `PRODUCT_BASELINE.md` |
 | 2026-08-04 | Technology baseline: Next.js, React, TypeScript, Tailwind, Supabase, Vercel | Accepted | Selected per `Technology_Selection.md` rationale | `../../Skumetra_MVP_Technology_Selection.md`; `package.json` | See `TECHNOLOGY_STACK.md` for what's actually installed vs. planned |
 | 2026-08-04 | Publish `main` as a public GitHub repository (MIT-licensed code; brand excluded) | Accepted | Andrey wanted the code downloadable/forkable | Repo is live at `github.com/andreygrubinnyc/skumetra`; `LICENSE` file | Made the public/private documentation split (below) necessary |
-| 2026-08-04, reaffirmed 2026-08-05 | Keep business-sensitive documentation (pricing hypotheses, validation targets, kill criteria, internal risks, security notes) out of the public repository | Accepted | `main` is public; this content isn't | Andrey, explicit both dates | See `docs/private/README.md` (local-only `docs/private` branch, never pushed) |
+| 2026-08-04, reaffirmed 2026-08-05 | Keep business-sensitive documentation (pricing hypotheses, validation targets, kill criteria, internal risks, security notes) out of the public repository | Accepted | `main` is public; this content isn't | Andrey, explicit both dates | See the local-only `docs/private` branch (never pushed) |
 | 2026-08-04 | Flat `/docs` file structure for project documentation (vs. the nested structure in `CLAUDE_PROJECT_PROMPT.md` §8) | Proposed — confirmation required | Most recent explicit process instruction at the time | `CLAUDE_PROJECT_PROMPT.md` §8 vs. chat-delivered structure | Both this session and the prior one used the flatter approach without Andrey confirming the nested-vs-flat question by name |
 | 2026-08-04, resolved 2026-08-05 | Four-release sequence (Public Validation Site → Interactive Product Demonstration → Functional Concierge MVP → Pilot-Ready Product) supersedes the three-release scheme in `Product_Brief.md` §19 | Accepted | `CLAUDE_PROJECT_PROMPT.md` is later and matches what was actually built; confirmed explicitly by Andrey 2026-08-05 | `../../CLAUDE_PROJECT_PROMPT.md` §12; Andrey's Phase 2 decisions | See `RELEASE_PLAN.md` |
 | Proposed and abandoned, exact date not verified; reverted 2026-08-05 | Static-export configuration for GoDaddy hosting (`output: "export"`) | **Rejected** | Andrey: "was a mistake and must not be continued" — Skumetra runs on Vercel as a normal server-capable Next.js app | Explicit instruction, this session | Any static-export config was discarded; confirmed `main` has no `output: "export"` |
