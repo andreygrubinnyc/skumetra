@@ -55,8 +55,10 @@ submissions after deployment.
 - `npm run typecheck` — clean.
 - `npm test` (Vitest) — 76/76 passing.
 - `npm run build` — succeeded.
-- Playwright e2e/accessibility — **not re-run** in this documentation pass;
-  last known result 24/24. Re-run before relying on this number.
+- `npm run test:e2e` (Playwright, e2e + accessibility) — 24/24 passing,
+  including 8 axe-core WCAG 2.1 A/AA checks, 0 violations.
+- Responsive breakpoints (375/768/1024/~1600px) — manually verified, no
+  horizontal scroll, across all four routes.
 - Live production check: real Supabase insert verified working via a
   direct API call against `https://skumetra.vercel.app`.
 
@@ -68,7 +70,7 @@ currently a hard blocker on technical work.
 
 ## Exact next recommended task
 
-Manually verify the 768px/1024px breakpoints, then begin Release 2 scoping
+Begin Release 2 scoping
 (breaking `../../Skumetra_MVP_First_Application_Pages.md` and
 `../../Skumetra_MVP_Workflow.md` into page-level specs) when ready. Seller
 outreach itself is a business activity, not a code task, and isn't blocked

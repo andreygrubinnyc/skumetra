@@ -50,8 +50,8 @@ application submissions while any 🔴 item is open.
       against the real project — applied 2026-08-05.
 - [ ] **Verify favicon files** — `favicon.svg`, `icon-32.png`, `icon-48.png`,
       `apple-touch-icon.png` render correctly in browser tabs and on iOS.
-- [ ] **Test mobile layout** at 375 / 768 / 1024 / 1440 (no horizontal scroll). 375px and
-      ~1600px desktop manually verified; 768/1024 not yet manually inspected.
+- [x] **Test mobile layout** at 375 / 768 / 1024 / ~1600 (no horizontal scroll) —
+      all four manually verified 2026-08-05 across `/`, `/pilot`, `/privacy`, `/terms`.
 - [ ] **Run an accessibility review** (keyboard nav, focus order, contrast, screen reader) —
       automated axe-core coverage exists (0 violations); manual screen-reader pass not done.
 - [ ] **Run a link check** (internal anchors, `mailto:`, footer links).
@@ -80,9 +80,9 @@ application submissions while any 🔴 item is open.
       submission against the live Supabase backend. GitHub Actions CI
       (`.github/workflows/ci.yml`) runs lint/typecheck/test/build on every PR
       and push to `main`.
-- [x] `npm run build`, `npm run test` pass locally (re-verified 2026-08-05).
-      Playwright e2e was not re-run in the 2026-08-05 documentation pass —
-      last known result 24/24; re-run before the next release decision.
+- [x] `npm run build`, `npm run test` (76/76), and `npm run test:e2e`
+      (24/24, including 8 axe-core accessibility checks, 0 violations) all
+      pass locally — re-verified fresh 2026-08-05.
 - [ ] **Obtain approval before treating this as a public marketing launch**
       (as opposed to the current validation-stage availability) — the 🔴
       blockers above (legal review, Turnstile) should be revisited first.

@@ -17,21 +17,19 @@
 - **Production build:** succeeds.
 - **`npm audit`:** 0 vulnerabilities (after the `next` 15→16 / `vitest` 2→4
   upgrade).
-
-## Implemented but not re-verified in this documentation pass
-
 - **E2E + accessibility (Playwright):** `tests/e2e/skumetra.spec.ts`,
-  `tests/e2e/accessibility.spec.ts` exist and cover the eight core
-  scenarios plus axe-core checks. Last known result: 24/24 passing — not
-  re-run as part of this documentation session. Re-run before trusting this
-  number for a release decision.
+  `tests/e2e/accessibility.spec.ts` — 24/24 passing, re-run fresh
+  2026-08-05 (Desktop Chrome + mobile viewport). Includes 8 axe-core
+  WCAG 2.1 A/AA checks, 0 violations.
+- **Responsive breakpoints:** manually verified, no horizontal scroll, at
+  375px, 768px, 1024px, and ~1600px across `/`, `/pilot`, `/privacy`,
+  `/terms` — 2026-08-05.
 
 ## Recommended, not yet done
 
 - Manual screen-reader pass (automated axe-core coverage exists; that's not
   the same thing).
 - Manual link check (internal anchors, `mailto:`, footer links).
-- 768px/1024px breakpoint manual inspection.
 
 ## GitHub-side controls — external confirmation required
 

@@ -85,3 +85,13 @@ documents, followed by this `docs/project/` package plus a local-only
 reconciled an earlier, unmerged documentation branch
 (`docs/project-management-baseline`, dated 2026-08-04) — preserved as
 historical record rather than deleted.
+
+## 2026-08-05 — Pre-merge review of the documentation package
+
+Before merging `docs/public-baseline` into `main`: manually verified the
+768px and 1024px breakpoints (previously untested — no horizontal scroll
+on any route), re-ran the full Playwright suite fresh (24/24, including
+accessibility), and re-read every file for business-sensitive content.
+Found and fixed one issue — several public files named specific
+`docs/private` sub-filenames rather than pointing at the branch generally;
+generalized to branch-level mentions only.

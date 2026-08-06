@@ -8,7 +8,6 @@ pushed or merged — see `PROJECT_INDEX.md`.
 
 | ID | Risk or question | Type | Impact | Current evidence | Owner | Next action | Status |
 |---|---|---|---|---|---|---|---|
-| R-P01 | Tablet (768px) / large-desktop (1024px+) breakpoints not manually verified | Technical/UX | Low — fluid CSS designed to scale continuously, both endpoints checked | `LAUNCH_CHECKLIST.md` | Unassigned | Manual inspection at both widths | Open, low impact |
 | R-P02 | TOCTOU race in duplicate-email detection (check-then-insert, not atomic) | Technical | Low — acceptable for a review queue today | `src/app/api/pilot-application/route.ts` | Unassigned | Add a DB unique constraint + upsert if it ever matters | Open, low priority |
 | R-P03 | Legal entity name, business mailing address, and governing-law jurisdiction undocumented anywhere in the project | Legal | Blocks counsel review of `/privacy` and `/terms` | `LAUNCH_CHECKLIST.md`, `src/app/privacy/page.tsx` comments | Andrey | Supply the missing details, then get counsel review | Open, blocking a compliant launch (not blocking current validation use) |
 | R-P04 | No Cloudflare Turnstile — honeypot + rate limiting are the only spam protection | Security | Currently acceptable; becomes relevant if spam volume increases | `.env.example`, `LAUNCH_CHECKLIST.md` | Unassigned | Add Turnstile if/when a site key is available and spam becomes a real problem | Open, non-blocking |

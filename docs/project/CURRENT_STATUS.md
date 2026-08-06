@@ -30,11 +30,16 @@ business activity tracked privately, not in this repository.
   entity name, business mailing address, and governing-law jurisdiction,
   none of which are documented anywhere in this project.
 - Logo, favicon, and icon assets.
+- Responsive layout — manually verified with no horizontal scroll at 375px,
+  768px, 1024px, and ~1600px across `/`, `/pilot`, `/privacy`, `/terms`
+  (2026-08-05).
 - Full automated test suite: 76/76 Vitest unit/component tests passing as
   of 2026-08-05. Playwright e2e + accessibility specs exist
   (`tests/e2e/skumetra.spec.ts`, `tests/e2e/accessibility.spec.ts`); last
-  known result was 24/24 passing, not re-run in this documentation pass —
-  see [`TESTING_AND_SECURITY.md`](TESTING_AND_SECURITY.md).
+  Playwright e2e + accessibility specs (`tests/e2e/skumetra.spec.ts`,
+  `tests/e2e/accessibility.spec.ts`) re-run fresh 2026-08-05: 24/24 passing
+  (Desktop Chrome + mobile viewport, including 8 axe-core WCAG 2.1 A/AA
+  checks with 0 violations).
 - Production build succeeds. Lint and typecheck clean.
 - GitHub Actions CI (`.github/workflows/ci.yml`) — lint/typecheck/test/build
   on every PR and push to `main`.
@@ -57,9 +62,6 @@ list (auth, file processing, matching, calculations, alerts).
 
 ## Partially implemented
 
-- Responsive layout — built fluid/responsive throughout, but only manually
-  verified at 375px and ~1600px. 768px and 1024px breakpoints not yet
-  manually inspected (low risk, not zero).
 - Privacy/Terms — real content exists but is not legally complete (see
   above).
 
@@ -106,9 +108,8 @@ blocked by anything in this repository.
 
 ## Immediate next steps
 
-1. Manually verify the 768px/1024px breakpoints.
-2. Decide on Sentry/PostHog activation timing.
-3. Resolve the legal-entity-name/address/jurisdiction gap for Privacy/Terms
+1. Decide on Sentry/PostHog activation timing.
+2. Resolve the legal-entity-name/address/jurisdiction gap for Privacy/Terms
    before treating them as launch-complete.
-4. Begin Release 2 planning (interactive product demonstration with
+3. Begin Release 2 planning (interactive product demonstration with
    realistic sample data) when ready — see `RELEASE_PLAN.md`.
