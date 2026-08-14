@@ -1,6 +1,6 @@
 # Skumetra — Data and Business Rules
 
-**Owner:** Andrey Grubin · **Status:** Active, mostly "Planned — requiring decision" · **Last verified:** 2026-08-05
+**Owner:** Andrey Grubin · **Status:** Active, mostly "Planned — requiring decision" · **Last verified:** 2026-08-14
 
 ## What's implemented today
 
@@ -28,8 +28,10 @@ Per `../../Skumetra_MVP_Workflow.md` and
 products, product matches, product analysis (stock/cost/margin signals),
 protection rules, alerts, and seller decisions/activity history. None of
 these have a database table, type, or processing code yet — the
-`src/components/product/*` preview components use hand-authored fictional
-data in `src/data/landing-sample-data.ts`, not any of these entities.
+`src/components/product/*` preview components render fictional data from
+`src/data/landing-sample-data.ts`, not any of these entities. The safe
+prices in that sample data are computed by `calc-v1` (below) rather than
+hand-authored, and a test fails if any of them drifts.
 
 ## AI permissions and prohibitions
 
@@ -42,15 +44,49 @@ future data-processing code:
   deciding prices, approving uncertain matches, overriding rules, taking
   seller actions.
 
-## Deterministic financial-rule boundary
+## Deterministic financial-rule boundary — `calc-v1`
 
-**Required — not yet implemented, no formula exists yet.** Minimum-safe-price
-and margin calculations must be deterministic (ordinary code, not an AI
-call). No exact formula, fee model, rounding rule, precedence rule, or
-threshold is defined anywhere in the repository or the source planning
-documents at the level of precision needed to implement it. **This needs an
-explicit decision from Andrey before Release 3 calculation work starts** —
-do not invent a formula to fill the gap.
+**The formula structure is approved.** Financial calculations are
+deterministic ordinary code, never an AI call — AI does not calculate or
+override a safe price, and must not be introduced into this path.
+
+```
+non_percentage_cost       = supplier_cost + supplier_shipping
+                          + fixed_marketplace_fee + fulfillment_cost
+                          + additional_fixed_cost_buffer
+effective_percentage_cost = marketplace_percentage_fee
+                          + additional_percentage_cost
+profit_floor_price        = (non_percentage_cost + minimum_dollar_profit)
+                          / (1 - effective_percentage_cost)
+margin_floor_price        = non_percentage_cost
+                          / (1 - effective_percentage_cost - minimum_margin_percentage)
+minimum_safe_price        = max(profit_floor_price, margin_floor_price,
+                                optional_absolute_minimum_price)
+```
+
+Confirmed definitions:
+
+- Percentage fees apply to the **selling price**, not to cost — which is
+  why the safe price is solved algebraically rather than added up.
+- **Estimated margin means estimated profit divided by selling price.**
+- **Both** the minimum-dollar-profit and minimum-margin rules must be
+  satisfied; the **higher required floor controls**.
+- Full precision is carried internally and the final safe price is
+  **rounded up to the next cent, never downward** — rounding a threshold
+  down can leave a price that misses the seller's configured minimum
+  looking compliant.
+
+**What is implemented:** a small deterministic utility,
+`src/lib/calc/safe-price.ts`, used to generate and verify the fictional
+landing-page samples so the displayed numbers are reproducible from the
+displayed rules. **The production analysis engine is not implemented** —
+no file processing, matching, persistence, alerting, or seller-specific
+calculation exists. That remains Release 3 scope.
+
+**Still pending decisions:** production fee and shipping defaults,
+missing-data behavior, maximum-price conflict behavior, and other
+edge-case rules. Approving the formula *structure* did not approve those
+*inputs* — do not invent them.
 
 ## Data freshness expectations
 
