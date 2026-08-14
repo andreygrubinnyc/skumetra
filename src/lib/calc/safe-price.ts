@@ -8,7 +8,7 @@
  * configuration, or Amazon integration here, and none belongs here. That
  * engine is Release 3 scope.
  *
- * Approved formula structure (D-06) and rounding rule (D-11):
+ * Approved formula structure and rounding rule:
  *
  *   non_percentage_cost      = supplier_cost + supplier_shipping
  *                            + fixed_marketplace_fee + fulfillment_cost
@@ -165,7 +165,7 @@ export function calculateSafePrice(rules: SafePriceRules): SafePriceResult {
   const profitFloor = nonPercentageCost.plus(rules.minimumDollarProfit).dividedBy(profitDenominator)
   const marginFloor = nonPercentageCost.dividedBy(marginDenominator)
 
-  // Full precision is preserved until the final comparison, per D-11.
+  // Full precision is preserved until the final comparison.
   let controlling = profitFloor.gte(marginFloor) ? profitFloor : marginFloor
   let controllingRule: NonNullable<SafePriceResult['controllingRule']> =
     profitFloor.gte(marginFloor) ? 'profit' : 'margin'

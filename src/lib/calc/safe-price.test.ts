@@ -81,7 +81,7 @@ describe('calc-v1 higher floor controls', () => {
   })
 })
 
-describe('calc-v1 rounding (D-11 — always up to the next cent)', () => {
+describe('calc-v1 rounding — always up to the next cent', () => {
   it('rounds a repeating result up rather than to nearest', () => {
     // N = 20.00 -> 25 / 0.85 = 29.41176...  nearest would be 29.41
     const r = calculateSafePrice({ ...base, supplierCost: 13.0 })
