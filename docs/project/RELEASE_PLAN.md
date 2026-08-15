@@ -1,6 +1,6 @@
 # Skumetra — Release Plan
 
-**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-05
+**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-14
 **Authority:** Four-release sequence confirmed by Andrey 2026-08-05,
 superseding the three-release scheme in `../../Skumetra_MVP_Product_Brief.md`
 §19. See `DECISION_LOG.md`.
@@ -61,9 +61,11 @@ Everything else in this release — auth, general database, file storage,
 CSV/Excel processing, matching, calculations, alerts — is **not started**;
 no code, dependency, or schema exists for any of it.
 
-**Dependencies:** Supabase Auth/Storage provisioning; a deterministic
-financial-formula decision (see `DATA_AND_BUSINESS_RULES.md` — no formula
-is defined anywhere yet).
+**Dependencies:** Supabase Auth/Storage provisioning. The deterministic
+financial-formula *structure* is approved as `calc-v1` (see
+[`DATA_AND_BUSINESS_RULES.md`](DATA_AND_BUSINESS_RULES.md)); production
+fee defaults, missing-data behavior, and remaining edge-case rules are
+still pending.
 
 **Exit criteria:** not yet defined precisely.
 

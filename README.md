@@ -132,9 +132,19 @@ env vars aren't set (see `.env.example`). The client-side adapter is
 
 All preview figures are fictional and live in
 [`src/data/landing-sample-data.ts`](src/data/landing-sample-data.ts). The hero preview,
-Action Center table, and Protection Rules panel describe **the same imaginary account** —
-keep them internally consistent (safe prices should follow the rules). Types are in
-[`src/types/landing.ts`](src/types/landing.ts). Never paste real seller or customer data.
+Action Center table, and Protection Rules panel describe **the same imaginary account**.
+
+**Do not hand-edit a safe price.** Every `minimumSafePrice` is computed by the
+approved `calc-v1` formula in [`src/lib/calc/safe-price.ts`](src/lib/calc/safe-price.ts)
+from that product's supplier cost and the shared `SAMPLE_RULES` assumption set.
+To change a sample, change the supplier cost or the rules — the tests in
+[`landing-sample-data.test.ts`](src/data/landing-sample-data.test.ts) recompute the
+expectation and fail if a displayed figure no longer follows from the displayed
+rules. `SAMPLE_RULES` are fictional demonstration assumptions, **not** Amazon's real
+fee schedule and not production defaults.
+
+Types are in [`src/types/landing.ts`](src/types/landing.ts). Never paste real seller
+or customer data.
 
 Marketing copy lives in [`src/data/content.ts`](src/data/content.ts) and FAQ entries in
 [`src/data/faq-data.ts`](src/data/faq-data.ts).
