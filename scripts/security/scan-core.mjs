@@ -5,7 +5,7 @@
  * touching the filesystem or the network. No scanner here makes a network
  * request — local gates must work offline.
  */
-import { readFileSync, statSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, openSync, fstatSync, closeSync } from 'node:fs'
 import { join, extname, relative } from 'node:path'
 import { isAllowed } from './allowlist.mjs'
 import {
@@ -134,13 +134,31 @@ export function listFiles(root, base = root) {
   return out
 }
 
-/** Reads a file as UTF-8, returning null for unreadable or oversized files. */
+/**
+ * Reads a file as UTF-8, returning null for unreadable or oversized files.
+ *
+ * Opens the file once and both sizes and reads that *same file descriptor*.
+ * Calling `statSync(path)` and then `readFileSync(path)` re-resolves the path,
+ * leaving a window in which the file could be swapped between the check and
+ * the read — so the size limit could be bypassed and different bytes scanned
+ * than were measured.
+ */
 export function readTextFile(absPath, maxBytes = 2_000_000) {
+  let fd
   try {
-    if (statSync(absPath).size > maxBytes) return null
-    return readFileSync(absPath, 'utf8')
+    fd = openSync(absPath, 'r')
+    if (fstatSync(fd).size > maxBytes) return null
+    return readFileSync(fd, 'utf8')
   } catch {
     return null
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // Nothing useful to do if the descriptor is already gone.
+      }
+    }
   }
 }
 
