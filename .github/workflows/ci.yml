@@ -1,21 +1,46 @@
 name: CI
 
+# Every third-party Action below is pinned to a full commit SHA. A tag is
+# mutable — an upstream account compromise can repoint it at malicious code —
+# while a SHA cannot be changed after the fact. The trailing comment records
+# the human-readable release the SHA corresponds to.
+
 on:
   pull_request:
   push:
     branches: [main]
 
+# Least privilege by default. No job here needs to write to the repository.
 permissions:
   contents: read
 
+# A newer push to the same PR makes the older run irrelevant; cancel it rather
+# than paying for both. Never cancel in-progress runs on main.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The build needs a canonical URL for metadata/sitemap. It is public and is
+  # not a secret. No real credential is required: with Supabase env vars
+  # absent, the pilot route falls back to an in-memory store.
+  NEXT_PUBLIC_SITE_URL: https://skumetra.com
+
 jobs:
-  build-and-test:
+  verify:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # No step in this job pushes; keeping the token out of .git/config
+          # limits what a compromised dependency could do with it.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -29,16 +54,74 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
+      - name: Unit and component tests
         run: npm test
 
       - name: Build
         run: npm run build
-        env:
-          # The default test suite and build need no real credentials — the
-          # pilot-application route handler falls back to an in-memory store
-          # when Supabase env vars are absent (see
-          # src/lib/services/pilot-application-fallback-store.ts). This is
-          # the production site URL used for canonical/OG/sitemap metadata
-          # during the build; it does not need to be a live secret.
-          NEXT_PUBLIC_SITE_URL: https://skumetra.com
+
+  security:
+    name: Security scans and dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Secret scan (full repository)
+        run: npm run security:scan
+
+      - name: Public/private boundary scan
+        run: npm run security:public-boundary
+
+      - name: Workflow security scan
+        run: npm run security:workflows
+
+      - name: Dependency audit
+        # Fails the job on high or critical advisories. Moderate and low are
+        # surfaced by Dependabot rather than blocking every pull request.
+        run: npm audit --audit-level=high
+
+  e2e:
+    name: End-to-end and accessibility tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

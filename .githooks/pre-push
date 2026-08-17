@@ -1,0 +1,10 @@
+#!/bin/sh
+# Skumetra pre-push gate.
+#
+# Runs the complete verification appropriate before code leaves the machine:
+# the full quality gate, the dependency audit, every security scanner, and the
+# Playwright end-to-end suite.
+#
+# Emergency bypass: git push --no-verify   (see docs/project/TESTING_AND_SECURITY.md)
+set -e
+exec npm run --silent verify:push

@@ -13,7 +13,9 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Application tests live under src/; the security scanners are plain
+    // Node ESM under scripts/ and are covered by the same suite.
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.{test,spec}.mjs'],
     exclude: ['tests/e2e/**', 'node_modules/**'],
     css: false,
   },
