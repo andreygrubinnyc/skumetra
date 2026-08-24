@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 
 async function fillValidPilotForm(page: Page) {
   await page.getByLabel(/Full name/i).fill('Jordan Reyes')
-  await page.getByLabel(/Email/i).fill('jordan@northline.com')
+  await page.getByLabel(/Email/i).fill('jordan@example.com')
   await page.getByLabel(/Business or store name/i).fill('Northline Supply Co.')
   await page.getByRole('radio', { name: 'Yes, with live listings' }).check()
   await page.getByLabel(/Approximate active listings/i).selectOption('101-500')
@@ -66,7 +66,7 @@ test('6. pilot form accepts a valid submission (real route handler, fallback sto
   // per run avoids colliding with the duplicate-detection window.
   await page.goto('/pilot')
   await fillValidPilotForm(page)
-  await page.getByLabel(/Email/i).fill(`jordan+${Date.now()}@northline.com`)
+  await page.getByLabel(/Email/i).fill(`jordan+${Date.now()}@example.com`)
   await page.getByRole('button', { name: 'Apply for the Pilot' }).click()
   await expect(page.getByRole('heading', { name: /Thanks for applying/i })).toBeVisible()
   await expect(page.getByText(/contact qualified pilot participants/i)).toBeVisible()

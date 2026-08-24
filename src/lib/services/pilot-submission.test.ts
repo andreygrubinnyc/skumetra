@@ -4,7 +4,7 @@ import type { PilotApplication } from '@/types/pilot'
 
 const application: PilotApplication = {
   name: 'Jordan Reyes',
-  email: 'jordan@northline.com',
+  email: 'jordan@example.com',
   business: 'Northline Supply Co.',
   selling: 'yes',
   listings: '101-500',

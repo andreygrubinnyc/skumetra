@@ -10,7 +10,7 @@ import type { PilotApplication } from '@/types/pilot'
 
 const application: PilotApplication = {
   name: 'Jordan Reyes',
-  email: 'jordan@northline.com',
+  email: 'jordan@example.com',
   business: 'Northline Supply Co.',
   selling: 'yes',
   listings: '101-500',
@@ -26,7 +26,7 @@ describe('toPilotApplicationRecord', () => {
     const record = toPilotApplicationRecord(application, 'skumetra.com/pilot')
     expect(record).toEqual<PilotApplicationRecord>({
       name: 'Jordan Reyes',
-      email: 'jordan@northline.com',
+      email: 'jordan@example.com',
       business_name: 'Northline Supply Co.',
       amazon_selling_status: 'yes',
       listing_count_range: '101-500',
@@ -98,19 +98,19 @@ describe('insertPilotApplication', () => {
 describe('findRecentApplicationId', () => {
   it('returns the id when a recent row exists', async () => {
     const client = fakeClient({ selectResult: { data: { id: 'row-7' }, error: null } })
-    const id = await findRecentApplicationId(client, 'jordan@northline.com')
+    const id = await findRecentApplicationId(client, 'jordan@example.com')
     expect(id).toBe('row-7')
   })
 
   it('returns null when no recent row exists', async () => {
     const client = fakeClient({ selectResult: { data: null, error: null } })
-    const id = await findRecentApplicationId(client, 'jordan@northline.com')
+    const id = await findRecentApplicationId(client, 'jordan@example.com')
     expect(id).toBeNull()
   })
 
   it('fails open (returns null) when the query itself errors', async () => {
     const client = fakeClient({ selectResult: { data: null, error: { message: 'timeout' } } })
-    const id = await findRecentApplicationId(client, 'jordan@northline.com')
+    const id = await findRecentApplicationId(client, 'jordan@example.com')
     expect(id).toBeNull()
   })
 })

@@ -1,4 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import process from 'node:process'
 import { describe, it, expect } from 'vitest'
 import {
   scanTextForSecrets,
@@ -111,8 +115,16 @@ describe('personal data boundary', () => {
     expect(scanTextForPersonalData('hello@skumetra.com', 'README.md')).toHaveLength(0)
   })
 
-  it('allows synthetic sample domains used in fixtures', () => {
-    expect(scanTextForPersonalData('jordan@northline.com', 'tests/e2e/x.spec.ts')).toHaveLength(0)
+  it('allows reserved documentation domains used in fixtures', () => {
+    expect(scanTextForPersonalData('jordan@example.com', 'tests/e2e/x.spec.ts')).toHaveLength(0)
+    expect(scanTextForPersonalData('jordan@example.org', 'tests/e2e/x.spec.ts')).toHaveLength(0)
+  })
+
+  it('detects an ordinary externally-owned domain that merely looks fictional', () => {
+    // northline.com is a real registrable domain owned by someone. Treating it
+    // as universally fictional would let a genuine third-party address through.
+    const findings = scanTextForPersonalData('person@northline.com', 'docs/x.md')
+    expect(findings.map((f) => f.patternId)).toContain('email')
   })
 
   it('allows a UI placeholder email — nobody is identified by it', () => {
@@ -393,7 +405,7 @@ describe('staged personal-data detection', () => {
 
   it.each([
     ['the public project address', 'hello@skumetra.com'],
-    ['a fictional sample domain', 'jordan@northline.com'],
+    ['a reserved documentation domain', 'jordan@example.com'],
     ['a UI placeholder', 'placeholder="you@yourstore.com"'],
     ['public owner attribution', '**Owner:** Andrey Grubin · **Status:** Active'],
     ['a docs example address', 'someone@example.com'],
@@ -412,5 +424,117 @@ describe('staged personal-data detection', () => {
     expect(src).toContain('scanTextForSecrets')
     expect(src).toContain('scanPathForForbidden')
     expect(src).toContain('scanTextForPersonalData')
+  })
+})
+
+/**
+ * Review finding 1: the repository scan walked the filesystem while claiming
+ * to scan tracked files, so a normal ignored .env.local containing local dev
+ * credentials would fail `security:scan` and therefore `verify:push`.
+ *
+ * These drive the real script in a throwaway Git repository so the behaviour
+ * is proven end-to-end rather than asserted about a helper.
+ */
+describe('repository scan is Git-aware', () => {
+  const SCANNER = resolve('scripts/security/scan-repository.mjs')
+  const FAKE_AWS = 'AKIA' + 'Q'.repeat(16)
+
+  /** Runs the real scanner against a temp repo. Returns { code, out }. */
+  function runScan(setup) {
+    const dir = mkdtempSync(join(tmpdir(), 'skumetra-scan-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: dir })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
+      setup(dir)
+      const res = spawnSync(process.execPath, [SCANNER, '--root', dir], {
+        cwd: dir, encoding: 'utf8',
+      })
+      return { code: res.status, out: `${res.stdout}${res.stderr}` }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('ignores an untracked, gitignored .env.local holding dev credentials', () => {
+    const { code, out } = runScan((dir) => {
+      writeFileSync(join(dir, '.gitignore'), '.env\n.env*.local\n')
+      // Exactly what a correctly-configured developer machine looks like.
+      writeFileSync(join(dir, '.env.local'), `AWS_KEY=${FAKE_AWS}\n`)
+      writeFileSync(join(dir, 'index.js'), 'export const ok = true\n')
+      execFileSync('git', ['add', '.gitignore', 'index.js'], { cwd: dir })
+    })
+    expect(code).toBe(0)
+    expect(out).toContain('clean')
+  })
+
+  it('blocks a .env.local that has been force-added to the index', () => {
+    const { code, out } = runScan((dir) => {
+      writeFileSync(join(dir, '.gitignore'), '.env*.local\n')
+      writeFileSync(join(dir, '.env.local'), `AWS_KEY=${FAKE_AWS}\n`)
+      execFileSync('git', ['add', '-f', '.gitignore', '.env.local'], { cwd: dir })
+    })
+    expect(code).toBe(1)
+    expect(out).toContain('env-real')
+  })
+
+  it('blocks a synthetic secret in a tracked source file', () => {
+    const { code, out } = runScan((dir) => {
+      writeFileSync(join(dir, 'app.js'), `const key = "${FAKE_AWS}"\n`)
+      execFileSync('git', ['add', 'app.js'], { cwd: dir })
+    })
+    expect(code).toBe(1)
+    expect(out).toContain('aws-access-key')
+    // The value itself must never be echoed back.
+    expect(out).not.toContain(FAKE_AWS)
+  })
+
+  it('fails loudly outside a Git repository rather than scanning nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skumetra-nogit-'))
+    try {
+      writeFileSync(join(dir, 'app.js'), 'export const ok = true\n')
+      const res = spawnSync(process.execPath, [SCANNER, '--root', dir], {
+        cwd: dir, encoding: 'utf8',
+      })
+      // 2 = error. Never 0, which would falsely report "clean".
+      expect(res.status).toBe(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * Review finding 2: the boundary scanner skipped personal-data detection
+ * entirely for CLAUDE.md, SECURITY.md, the testing/security doc and the
+ * scanner sources — the files most likely to end up quoting a real address.
+ */
+describe('no whole-file personal-data exemptions', () => {
+  it('the exemption set is gone from the boundary scanner', () => {
+    const src = readFileSync('scripts/security/scan-public-boundary.mjs', 'utf8')
+    expect(src).not.toContain('BOUNDARY_DOC_EXEMPT')
+  })
+
+  it.each([
+    ['CLAUDE.md', 'contact: buyer@somerandomseller.net', 'email'],
+    ['SECURITY.md', 'reach me on 555-123-4567', 'phone'],
+    ['docs/project/TESTING_AND_SECURITY.md', 'see linkedin.com/in/someprospect', 'profile-url'],
+    ['scripts/security/scan-workflows.mjs', '// owner: buyer@somerandomseller.net', 'email'],
+  ])('detects third-party personal data in %s', (file, line, expected) => {
+    expect(scanTextForPersonalData(line, file).map((f) => f.patternId)).toContain(expected)
+  })
+
+  it.each([
+    ['CLAUDE.md', 'Questions: hello@skumetra.com'],
+    ['SECURITY.md', 'Email hello@skumetra.com'],
+    ['docs/project/TESTING_AND_SECURITY.md', '**Owner:** Andrey Grubin · **Status:** Active'],
+  ])('still allows the legitimate case in %s', (file, line) => {
+    expect(scanTextForPersonalData(line, file)).toHaveLength(0)
+  })
+
+  it('documentation may reference a private path without bypassing detection', () => {
+    // Naming the location is fine; it is content, not a path being tracked.
+    const line = 'Business-sensitive material lives on the local-only docs/private branch.'
+    expect(scanTextForPersonalData(line, 'CLAUDE.md')).toHaveLength(0)
   })
 })

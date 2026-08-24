@@ -19,7 +19,7 @@ import { PilotApplicationForm } from './pilot-application-form'
 
 async function fillValidForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/Full name/i), 'Jordan Reyes')
-  await user.type(screen.getByLabelText(/Email/i), 'jordan@northline.com')
+  await user.type(screen.getByLabelText(/Email/i), 'jordan@example.com')
   await user.type(screen.getByLabelText(/Business or store name/i), 'Northline Supply Co.')
   await user.click(screen.getByRole('radio', { name: 'Yes, with live listings' }))
   await user.selectOptions(screen.getByLabelText(/Approximate active listings/i), '101-500')

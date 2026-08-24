@@ -81,7 +81,7 @@ untrusted-input interpolation is introduced.
 
 - `scan-staged.mjs` — pre-commit gate over staged blob content; runs the
   credential, forbidden-path, **and personal-data** detectors
-- `scan-repository.mjs` — full-tree credential scan
+- `scan-repository.mjs` — credential scan over **Git-tracked** files
 - `scan-public-boundary.mjs` — private paths and third-party personal data
 - `scan-workflows.mjs` — GitHub Actions hardening rules
 
@@ -102,6 +102,20 @@ The active entries were derived by running the detectors against the scanner
 directory with no allowlist at all and exempting only what actually fired: two
 files, five pattern ids. The other six scanner files have no exemption, and a
 secret planted in any of them is still blocked.
+
+The repository scan reads `git ls-files` rather than walking the filesystem. A
+developer's ignored `.env.local` holds real local credentials by design; failing
+the push gate over it would train people to bypass the gate. What matters is
+whether a secret is *committed* — and a force-added `.env.local` becomes tracked
+and is still caught. Outside a Git repository the scan exits with an error
+rather than reporting "clean".
+
+Personal-data detection has **no whole-file exemptions**: documentation and the
+scanners themselves are scanned like every other tracked file, since those are
+the files most likely to quote a real address. Legitimate cases are handled by
+narrow value-level rules — the public project domain, reserved documentation
+domains (`example.com`, `example.org`), and placeholder detection. An ordinary
+externally-owned domain is never treated as fictional.
 
 The workflow scanner requires `timeout-minutes` on **every job** individually,
 parsed from the `jobs:` block rather than matched across the whole file — keys

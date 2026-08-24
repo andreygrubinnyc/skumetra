@@ -8,9 +8,13 @@
  *
  *   1. No forbidden path is tracked (private docs, bundles, uploads, .env).
  *   2. No local-only branch content has leaked into tracked files.
- *   3. No third-party personal data appears in tracked files. The owner's own
- *      published attribution and the project domain are explicitly allowed —
- *      those are intentionally public.
+ *   3. No third-party personal data appears in tracked files — in *every*
+ *      tracked file, with no whole-file exemptions. Documentation and the
+ *      scanners themselves are scanned like everything else; a blind spot in
+ *      the files most likely to quote a real address is the worst place to
+ *      have one. Narrow, value-level rules (the public project domain,
+ *      reserved documentation domains, placeholders, the owner's published
+ *      attribution) handle the legitimate cases instead.
  *
  * Exit:  0 clean · 1 findings · 2 error
  */
@@ -21,17 +25,6 @@ import {
   EXIT_OK, EXIT_FINDINGS, EXIT_ERROR,
   readTextFile, scanPathForForbidden, scanTextForPersonalData, shouldSkip, formatFindings, toPosix,
 } from './scan-core.mjs'
-
-/** Files that legitimately reference private *locations* without containing private data. */
-const BOUNDARY_DOC_EXEMPT = new Set([
-  'scripts/security/patterns.mjs',
-  'scripts/security/allowlist.mjs',
-  'scripts/security/scan-public-boundary.mjs',
-  'scripts/security/scan-core.mjs',
-  'docs/project/TESTING_AND_SECURITY.md',
-  'CLAUDE.md',
-  'SECURITY.md',
-])
 
 function trackedFiles(root) {
   const out = execFileSync('git', ['ls-files', '-z'], {
@@ -57,7 +50,7 @@ function main() {
     for (const hit of scanPathForForbidden(rel)) {
       pathFindings.push({ ...hit, file: rel })
     }
-    if (shouldSkip(rel) || BOUNDARY_DOC_EXEMPT.has(rel)) continue
+    if (shouldSkip(rel)) continue
     const text = readTextFile(join(root, rel))
     if (text === null) continue
     for (const hit of scanTextForPersonalData(text, rel)) {

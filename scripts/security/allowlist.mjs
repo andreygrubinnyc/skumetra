@@ -29,10 +29,10 @@ export const ALLOWLIST = [
     path: 'scripts/security/patterns.mjs',
     patterns: ['connection-string'],
     reason:
-      'The connection-string detector carries an inline comment illustrating the URI shape ' +
-      'it matches (scheme, then credentials, then host). It is documentation, not a credential. ' +
-      'Deliberately described here rather than written literally, so this file needs no ' +
-      'exemption of its own.',
+      'The connection-string regex in this file necessarily spells out the URI scheme names ' +
+      'it matches, and the adjacent comment shows the credential-bearing shape. The detector ' +
+      'therefore matches its own definition. Nothing here is a usable credential — there is no ' +
+      'real host, user, or password — but the pattern cannot be written without tripping itself.',
   },
   {
     path: 'scripts/security/scan-core.test.mjs',

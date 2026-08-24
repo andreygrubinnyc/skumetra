@@ -131,9 +131,12 @@ export const FORBIDDEN_PATH_PATTERNS = [
 ]
 
 /**
- * Personal-data patterns. These are only applied in contexts where such data
- * would indicate a leak (see scan-public-boundary), never repo-wide — the
- * public repo legitimately contains the owner's name and fictional samples.
+ * Personal-data patterns, applied to staged content and to every tracked file.
+ *
+ * Legitimate cases are handled by narrow *value-level* rules rather than by
+ * exempting whole files: the public project domain and reserved documentation
+ * domains below, plus the placeholder check. The owner's published name is not
+ * matched by any pattern here, so no rule is needed for it.
  */
 export const PERSONAL_DATA_PATTERNS = [
   { id: 'email', label: 'Email address', regex: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g },
@@ -142,7 +145,7 @@ export const PERSONAL_DATA_PATTERNS = [
 ]
 
 /** Emails that are intentionally public or clearly synthetic. */
-export const ALLOWED_EMAIL_DOMAINS = ['skumetra.com', 'example.com', 'example.org', 'northline.com', 'noreply.github.com']
+export const ALLOWED_EMAIL_DOMAINS = ['skumetra.com', 'example.com', 'example.org', 'noreply.github.com']
 
 /** Directories never worth scanning — generated, vendored, or binary. */
 export const IGNORED_DIRS = new Set([
