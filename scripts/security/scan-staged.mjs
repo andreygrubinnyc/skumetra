@@ -13,7 +13,8 @@ import { execFileSync } from 'node:child_process'
 import process from 'node:process'
 import {
   EXIT_OK, EXIT_FINDINGS, EXIT_ERROR,
-  scanTextForSecrets, scanPathForForbidden, shouldSkip, formatFindings,
+  scanTextForSecrets, scanPathForForbidden, scanTextForPersonalData,
+  shouldSkip, formatFindings,
 } from './scan-core.mjs'
 
 function git(args) {
@@ -53,6 +54,7 @@ function main() {
 
   const secretFindings = []
   const pathFindings = []
+  const personalFindings = []
 
   for (const file of files) {
     for (const hit of scanPathForForbidden(file)) {
@@ -64,9 +66,16 @@ function main() {
     for (const hit of scanTextForSecrets(text, file)) {
       secretFindings.push({ ...hit, file })
     }
+    // Third-party personal data is as damaging to leak as a credential, and
+    // once committed it is just as hard to retract. The project's own public
+    // contact address, fictional sample domains, UI placeholders, and the
+    // owner's published attribution are all excluded inside the detector.
+    for (const hit of scanTextForPersonalData(text, file)) {
+      personalFindings.push({ ...hit, file })
+    }
   }
 
-  const total = secretFindings.length + pathFindings.length
+  const total = secretFindings.length + pathFindings.length + personalFindings.length
   if (total === 0) {
     console.log(`✔ Staged scan clean — ${files.length} file(s) checked.`)
     return EXIT_OK
@@ -74,6 +83,7 @@ function main() {
 
   console.error(formatFindings('Credential findings in staged content:', secretFindings))
   console.error(formatFindings('Forbidden paths staged:', pathFindings))
+  console.error(formatFindings('Third-party personal data in staged content:', personalFindings))
   console.error(
     `\nCommit blocked: ${total} finding(s). Values above are redacted.\n` +
       'Unstage or remove the content, then commit again.\n',

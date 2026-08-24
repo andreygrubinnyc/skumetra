@@ -38,6 +38,74 @@ const UNTRUSTED_EXPRESSIONS = [
   'github.head_ref',
 ]
 
+
+/** Indentation width of a line, or null for blank/comment-only lines. */
+function indentOf(line) {
+  if (/^\s*(#.*)?$/.test(line)) return null
+  return line.length - line.trimStart().length
+}
+
+/**
+ * Extracts the jobs declared under the top-level `jobs:` key.
+ *
+ * Deliberately scoped to the `jobs:` block rather than matching any
+ * two-space-indented key in the file — keys under `on:` (`pull_request:`,
+ * `schedule:`) and under `permissions:` sit at the same indentation and are
+ * not jobs. A whole-file regex reports them as untimed jobs, which is both a
+ * false positive and a way for a genuinely untimed job to hide among noise.
+ *
+ * `hasOwnTimeout` requires `timeout-minutes` as a *direct child* of the job.
+ * A step-level timeout does not bound the job that contains it.
+ *
+ * @returns {{name: string, line: number, hasOwnTimeout: boolean}[]}
+ */
+export function parseJobs(text) {
+  const lines = String(text).split(/\r?\n/)
+
+  const jobsStart = lines.findIndex((l) => /^jobs:\s*(#.*)?$/.test(l))
+  if (jobsStart === -1) return []
+
+  // The block ends at the next top-level (zero-indent) key.
+  let jobsEnd = lines.length
+  for (let i = jobsStart + 1; i < lines.length; i++) {
+    const indent = indentOf(lines[i])
+    if (indent === 0) {
+      jobsEnd = i
+      break
+    }
+  }
+
+  const body = lines.slice(jobsStart + 1, jobsEnd)
+  const indents = body.map(indentOf).filter((n) => n !== null)
+  if (indents.length === 0) return []
+  const jobIndent = Math.min(...indents)
+
+  // Job keys: bare mapping keys at the shallowest indentation in the block.
+  const jobs = []
+  body.forEach((line, i) => {
+    const indent = indentOf(line)
+    if (indent !== jobIndent) return
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*):\s*(#.*)?$/)
+    if (m) jobs.push({ name: m[1], bodyStart: i + 1, line: jobsStart + 1 + i + 1 })
+  })
+
+  return jobs.map((job, idx) => {
+    const end = idx + 1 < jobs.length ? jobs[idx + 1].bodyStart - 1 : body.length
+    const jobBody = body.slice(job.bodyStart, end)
+
+    const childIndents = jobBody.map(indentOf).filter((n) => n !== null && n > jobIndent)
+    const childIndent = childIndents.length > 0 ? Math.min(...childIndents) : null
+
+    const hasOwnTimeout =
+      childIndent !== null &&
+      jobBody.some(
+        (l) => indentOf(l) === childIndent && /^\s*timeout-minutes:\s*\d+/.test(l),
+      )
+
+    return { name: job.name, line: job.line, hasOwnTimeout }
+  })
+}
+
 function scanWorkflow(rel, text) {
   const findings = []
   const lines = text.split(/\r?\n/)
@@ -101,15 +169,15 @@ function scanWorkflow(rel, text) {
     })
   }
 
-  // 6. Every job should bound its runtime.
-  const jobCount = (text.match(/^\s{2}[A-Za-z0-9_-]+:\s*$/gm) || []).length
-  const timeoutCount = (text.match(/timeout-minutes:/g) || []).length
-  if (jobCount > 0 && timeoutCount < 1) {
-    findings.push({
-      patternId: 'missing-timeout',
-      label: 'No timeout-minutes set; a hung job can hold a runner indefinitely',
-      file: rel, line: 1,
-    })
+  // 6. Every job must bound its own runtime.
+  for (const job of parseJobs(text)) {
+    if (!job.hasOwnTimeout) {
+      findings.push({
+        patternId: 'missing-timeout',
+        label: `Job "${job.name}" has no timeout-minutes; a hung job can hold a runner indefinitely`,
+        file: rel, line: job.line,
+      })
+    }
   }
 
   return findings

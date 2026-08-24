@@ -79,15 +79,35 @@ untrusted-input interpolation is introduced.
 
 `scripts/security/` holds dependency-free Node scanners:
 
-- `scan-staged.mjs` — pre-commit gate over staged blob content
+- `scan-staged.mjs` — pre-commit gate over staged blob content; runs the
+  credential, forbidden-path, **and personal-data** detectors
 - `scan-repository.mjs` — full-tree credential scan
 - `scan-public-boundary.mjs` — private paths and third-party personal data
 - `scan-workflows.mjs` — GitHub Actions hardening rules
 
 Findings are always **redacted** — a scanner that prints the secret it found has
-just copied it into the CI log. The allowlist
-(`scripts/security/allowlist.mjs`) is deliberately narrow: every entry names a
-specific path, the specific pattern ids it exempts, and a written reason.
+just copied it into the CI log.
+
+The allowlist (`scripts/security/allowlist.mjs`) is structurally constrained,
+not merely conventionally narrow. `validateAllowlist()` runs at module load and
+throws on a malformed entry, so the rules cannot be quietly relaxed:
+
+- **exact file paths only** — a directory entry would silently exempt every
+  file added there later;
+- **explicit pattern ids only** — no `'*'` wildcard, so widening an exemption
+  is a visible diff;
+- **a written reason on every entry.**
+
+The active entries were derived by running the detectors against the scanner
+directory with no allowlist at all and exempting only what actually fired: two
+files, five pattern ids. The other six scanner files have no exemption, and a
+secret planted in any of them is still blocked.
+
+The workflow scanner requires `timeout-minutes` on **every job** individually,
+parsed from the `jobs:` block rather than matched across the whole file — keys
+under `on:` and `permissions:` sit at the same indentation and are not jobs, and
+a step-level timeout does not bound the job containing it.
+
 Scanner behaviour is covered by tests using synthetic fixtures only.
 
 ### Enforced by GitHub — verify before claiming

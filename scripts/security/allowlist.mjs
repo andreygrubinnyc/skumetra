@@ -1,38 +1,53 @@
 /**
- * Narrow, documented allowlist for the security scanners.
+ * Narrow allowlist for the security scanners.
  *
- * Every entry must name a specific file (or a tightly-scoped path) AND the
- * specific pattern id it exempts. There is deliberately no wildcard entry and
- * no "allow everything in this directory" escape hatch — a broad allowlist
- * silently defeats the scan it is attached to.
+ * Design constraints, enforced by `validateAllowlist()` and covered by tests:
  *
- * Adding an entry requires a reason recorded inline. If you cannot state a
- * reason that survives review, the finding is probably real.
+ *   1. **Exact file paths only.** No directory prefixes. A directory entry
+ *      would silently exempt every file added to that directory later,
+ *      including ones nobody reviewed.
+ *   2. **Explicit pattern ids only.** No `'*'` wildcard. An entry must name
+ *      each pattern it exempts, so widening it is a visible diff.
+ *   3. **A written reason on every entry.** If you cannot state one that
+ *      survives review, the finding is probably real.
+ *
+ * The entries below were derived by running the detectors against this
+ * directory with no allowlist at all and exempting only what actually fired.
+ * Six of the eight files here need no exemption whatsoever and have none.
  */
 
 /**
  * @typedef {object} AllowEntry
- * @property {string} path      Repo-relative POSIX path, or a prefix ending in '/'.
- * @property {string[]} patterns Pattern ids exempted for that path.
+ * @property {string} path      Exact repo-relative POSIX file path.
+ * @property {string[]} patterns Explicit pattern ids exempted for that file.
  * @property {string} reason    Why this is safe. Required.
  */
 
 /** @type {AllowEntry[]} */
 export const ALLOWLIST = [
   {
-    // The scanners must contain the patterns they detect, or they cannot work.
-    path: 'scripts/security/',
-    patterns: ['*'],
-    reason: 'Detection patterns and their fixtures live here by necessity.',
+    path: 'scripts/security/patterns.mjs',
+    patterns: ['connection-string'],
+    reason:
+      'The connection-string detector carries an inline comment illustrating the URI shape ' +
+      'it matches (scheme, then credentials, then host). It is documentation, not a credential. ' +
+      'Deliberately described here rather than written literally, so this file needs no ' +
+      'exemption of its own.',
   },
   {
-    // Documents variable NAMES only; every value is intentionally empty.
+    path: 'scripts/security/scan-core.test.mjs',
+    patterns: ['private-key', 'connection-string', 'email', 'phone', 'profile-url'],
+    reason:
+      'Synthetic fixtures proving each detector fires. The key-shaped fixtures are built by ' +
+      'string concatenation so they never appear literally and need no exemption; these five ' +
+      'must appear literally for the assertions to be meaningful. All values are invented.',
+  },
+  {
     path: '.env.example',
     patterns: ['password-assignment'],
     reason: 'Template documents variable names with no populated values.',
   },
   {
-    // Explains what must never be committed, so it names the shapes.
     path: 'docs/project/TESTING_AND_SECURITY.md',
     patterns: ['password-assignment'],
     reason: 'Security documentation describes credential categories in prose.',
@@ -50,17 +65,46 @@ function norm(p) {
 }
 
 /**
+ * Structural validation of the allowlist itself.
+ *
+ * Runs at module load so a malformed or over-broad entry fails loudly at the
+ * first scan rather than quietly disabling detection. Returns the list of
+ * problems so tests can assert on it directly.
+ */
+export function validateAllowlist(list = ALLOWLIST) {
+  const problems = []
+  for (const entry of list) {
+    const path = norm(entry.path ?? '')
+    if (!path) problems.push('entry with no path')
+    if (path.endsWith('/')) {
+      problems.push(`directory-wide entry is not permitted: "${path}"`)
+    }
+    if (!Array.isArray(entry.patterns) || entry.patterns.length === 0) {
+      problems.push(`entry "${path}" must list at least one pattern id`)
+    } else if (entry.patterns.includes('*')) {
+      problems.push(`wildcard pattern exemption is not permitted: "${path}"`)
+    }
+    if (!entry.reason || String(entry.reason).trim().length < 20) {
+      problems.push(`entry "${path}" needs a written reason`)
+    }
+  }
+  return problems
+}
+
+const problems = validateAllowlist()
+if (problems.length > 0) {
+  throw new Error(`Invalid security allowlist:\n  - ${problems.join('\n  - ')}`)
+}
+
+/**
  * Returns true when `patternId` is explicitly allowed for `filePath`.
- * Matching is exact-path or directory-prefix; never a bare substring.
+ * Matching is exact-path only — never a prefix, never a substring.
  */
 export function isAllowed(filePath, patternId) {
   const file = norm(filePath)
-  return ALLOWLIST.some((entry) => {
-    const target = norm(entry.path)
-    const pathMatches = target.endsWith('/') ? file.startsWith(target) : file === target
-    if (!pathMatches) return false
-    return entry.patterns.includes('*') || entry.patterns.includes(patternId)
-  })
+  return ALLOWLIST.some(
+    (entry) => norm(entry.path) === file && entry.patterns.includes(patternId),
+  )
 }
 
 /** Exposed for tests and for documenting the active exemptions. */

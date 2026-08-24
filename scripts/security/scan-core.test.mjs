@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import {
   scanTextForSecrets,
@@ -6,9 +7,9 @@ import {
   shouldSkip,
   toPosix,
 } from './scan-core.mjs'
-import { scanWorkflow } from './scan-workflows.mjs'
+import { scanWorkflow, parseJobs } from './scan-workflows.mjs'
 import { redact, looksLikePlaceholder } from './patterns.mjs'
-import { isAllowed } from './allowlist.mjs'
+import { isAllowed, ALLOWLIST, validateAllowlist } from './allowlist.mjs'
 
 /**
  * Every credential-shaped string below is SYNTHETIC and invalid. They exist
@@ -150,9 +151,13 @@ describe('allowlist', () => {
     expect(isAllowed('.env.example', 'aws-access-key')).toBe(false)
   })
 
-  it('matches directory prefixes but not partial names', () => {
-    expect(isAllowed('scripts/security/patterns.mjs', 'aws-access-key')).toBe(true)
-    expect(isAllowed('scripts/security-notes.md', 'aws-access-key')).toBe(false)
+  it('matches an exact path only — no prefix, no partial name', () => {
+    // patterns.mjs is exempt for connection-string and nothing else.
+    expect(isAllowed('scripts/security/patterns.mjs', 'connection-string')).toBe(true)
+    expect(isAllowed('scripts/security/patterns.mjs', 'aws-access-key')).toBe(false)
+    // A similarly-named file outside the entry gets nothing.
+    expect(isAllowed('scripts/security-notes.md', 'connection-string')).toBe(false)
+    expect(isAllowed('scripts/security/patterns.mjs.bak', 'connection-string')).toBe(false)
   })
 })
 
@@ -227,5 +232,185 @@ describe('redaction helper', () => {
   it('recognises placeholder text', () => {
     expect(looksLikePlaceholder('your-key-here')).toBe(true)
     expect(looksLikePlaceholder('AKIA' + 'Q'.repeat(16))).toBe(false)
+  })
+})
+
+/**
+ * Review finding 1: the allowlist previously exempted every pattern for the
+ * whole `scripts/security/` directory, which disabled secret scanning for any
+ * file added there. These lock the narrow replacement in place.
+ */
+describe('allowlist is structurally narrow', () => {
+  it('passes its own structural validation', () => {
+    expect(validateAllowlist()).toEqual([])
+  })
+
+  it('contains no directory-wide entry', () => {
+    for (const entry of ALLOWLIST) {
+      expect(entry.path.endsWith('/')).toBe(false)
+    }
+  })
+
+  it('contains no wildcard pattern exemption', () => {
+    for (const entry of ALLOWLIST) {
+      expect(entry.patterns).not.toContain('*')
+    }
+  })
+
+  it('grants scripts/security/ no blanket exemption', () => {
+    expect(isAllowed('scripts/security/scan-repository.mjs', 'aws-access-key')).toBe(false)
+    expect(isAllowed('scripts/security/scan-staged.mjs', 'github-token')).toBe(false)
+    expect(isAllowed('scripts/security/scan-core.mjs', 'stripe-secret')).toBe(false)
+    expect(isAllowed('scripts/security/allowlist.mjs', 'openai-key')).toBe(false)
+  })
+
+  it('still blocks a secret planted in an unrelated security file', () => {
+    const planted = `const k = "AKIA${'Q'.repeat(16)}"`
+    const findings = scanTextForSecrets(planted, 'scripts/security/scan-workflows.mjs')
+    expect(findings.map((f) => f.patternId)).toContain('aws-access-key')
+  })
+
+  it('still blocks a secret in a NEW file added under scripts/security/', () => {
+    const planted = `const t = "ghp_${'b'.repeat(36)}"`
+    const findings = scanTextForSecrets(planted, 'scripts/security/some-future-helper.mjs')
+    expect(findings.map((f) => f.patternId)).toContain('github-token')
+  })
+
+  it('exempts only the exact declared file and pattern', () => {
+    // patterns.mjs may carry the connection-string example, nothing else.
+    expect(isAllowed('scripts/security/patterns.mjs', 'connection-string')).toBe(true)
+    expect(isAllowed('scripts/security/patterns.mjs', 'aws-access-key')).toBe(false)
+  })
+
+  it('rejects a directory or wildcard entry if one is ever reintroduced', () => {
+    const bad = [
+      { path: 'scripts/security/', patterns: ['aws-access-key'], reason: 'a sufficiently long reason' },
+      { path: 'src/thing.ts', patterns: ['*'], reason: 'a sufficiently long reason' },
+    ]
+    const problems = validateAllowlist(bad)
+    expect(problems.join(' ')).toMatch(/directory-wide/)
+    expect(problems.join(' ')).toMatch(/wildcard/)
+  })
+})
+
+/**
+ * Review finding 2: the timeout rule previously passed if *any* single
+ * timeout-minutes existed anywhere in the file, and counted keys under `on:`
+ * as jobs.
+ */
+describe('per-job timeout enforcement', () => {
+  const sha = '0'.repeat(40)
+  const wf = (jobs) =>
+    ['name: T', 'on:', '  pull_request:', '  push:', '    branches: [main]',
+     'permissions:', '  contents: read', 'jobs:', ...jobs].join('\n')
+
+  it('passes with one job that has a timeout', () => {
+    const text = wf(['  build:', '    runs-on: ubuntu-latest', '    timeout-minutes: 10', '    steps: []'])
+    expect(parseJobs(text).map((j) => [j.name, j.hasOwnTimeout])).toEqual([['build', true]])
+    expect(scanWorkflow('w.yml', text).map((f) => f.patternId)).not.toContain('missing-timeout')
+  })
+
+  it('passes with two jobs that both have timeouts', () => {
+    const text = wf([
+      '  build:', '    runs-on: ubuntu-latest', '    timeout-minutes: 10', '    steps: []',
+      '  test:', '    runs-on: ubuntu-latest', '    timeout-minutes: 20', '    steps: []',
+    ])
+    expect(parseJobs(text).map((j) => j.hasOwnTimeout)).toEqual([true, true])
+    expect(scanWorkflow('w.yml', text).map((f) => f.patternId)).not.toContain('missing-timeout')
+  })
+
+  it('fails when one of two jobs is missing its timeout', () => {
+    const text = wf([
+      '  build:', '    runs-on: ubuntu-latest', '    timeout-minutes: 10', '    steps: []',
+      '  untimed:', '    runs-on: ubuntu-latest', '    steps: []',
+    ])
+    expect(parseJobs(text).map((j) => [j.name, j.hasOwnTimeout])).toEqual([
+      ['build', true],
+      ['untimed', false],
+    ])
+    const findings = scanWorkflow('w.yml', text).filter((f) => f.patternId === 'missing-timeout')
+    expect(findings).toHaveLength(1)
+    expect(findings[0].label).toContain('untimed')
+  })
+
+  it('does not treat keys under on: or permissions: as jobs', () => {
+    const text = wf(['  build:', '    runs-on: ubuntu-latest', '    timeout-minutes: 5', '    steps: []'])
+    expect(parseJobs(text).map((j) => j.name)).toEqual(['build'])
+  })
+
+  it('does not count a step-level timeout as the job timeout', () => {
+    const text = wf([
+      '  build:', '    runs-on: ubuntu-latest', '    steps:',
+      '      - name: slow', '        timeout-minutes: 5', `        uses: actions/checkout@${sha} # v4`,
+    ])
+    expect(parseJobs(text)[0].hasOwnTimeout).toBe(false)
+  })
+
+  it('stops at the next top-level key after jobs:', () => {
+    const text = [
+      'name: T', 'jobs:', '  build:', '    timeout-minutes: 5', '    steps: []',
+      'concurrency:', '  group: x',
+    ].join('\n')
+    expect(parseJobs(text).map((j) => j.name)).toEqual(['build'])
+  })
+
+  it('returns no jobs when there is no jobs: block', () => {
+    expect(parseJobs('name: T\non:\n  push:\n')).toEqual([])
+  })
+
+  it('reports every untimed job, not just the first', () => {
+    const text = wf([
+      '  a:', '    runs-on: ubuntu-latest', '    steps: []',
+      '  b:', '    runs-on: ubuntu-latest', '    steps: []',
+    ])
+    const findings = scanWorkflow('w.yml', text).filter((f) => f.patternId === 'missing-timeout')
+    expect(findings).toHaveLength(2)
+  })
+
+  it('accepts the repository real workflows as timed', () => {
+    const real = readFileSync('.github/workflows/ci.yml', 'utf8')
+    const jobs = parseJobs(real)
+    expect(jobs.length).toBeGreaterThan(1)
+    expect(jobs.every((j) => j.hasOwnTimeout)).toBe(true)
+  })
+})
+
+/**
+ * Review finding 3: the pre-commit staged scanner checked only credentials
+ * and forbidden paths, so third-party personal data could be committed.
+ * `scan-staged.mjs` now also runs the personal-data detector; these cover the
+ * detector behaviour it relies on.
+ */
+describe('staged personal-data detection', () => {
+  it.each([
+    ['third-party email', 'owner: buyer@somerandomseller.net', 'email'],
+    ['phone number', 'contact 555-123-4567', 'phone'],
+    ['social profile URL', 'see linkedin.com/in/someprospect', 'profile-url'],
+  ])('blocks a synthetic %s in staged content', (_label, line, expected) => {
+    const findings = scanTextForPersonalData(line, 'docs/notes.md')
+    expect(findings.map((f) => f.patternId)).toContain(expected)
+  })
+
+  it.each([
+    ['the public project address', 'hello@skumetra.com'],
+    ['a fictional sample domain', 'jordan@northline.com'],
+    ['a UI placeholder', 'placeholder="you@yourstore.com"'],
+    ['public owner attribution', '**Owner:** Andrey Grubin · **Status:** Active'],
+    ['a docs example address', 'someone@example.com'],
+  ])('allows %s', (_label, line) => {
+    expect(scanTextForPersonalData(line, 'src/x.tsx')).toHaveLength(0)
+  })
+
+  it('redacts personal values rather than echoing them', () => {
+    const [f] = scanTextForPersonalData('buyer@somerandomseller.net', 'docs/x.md')
+    expect(f.redacted).not.toBe('buyer@somerandomseller.net')
+    expect(f.redacted).toContain('*')
+  })
+
+  it('scan-staged wires all three detectors together', () => {
+    const src = readFileSync('scripts/security/scan-staged.mjs', 'utf8')
+    expect(src).toContain('scanTextForSecrets')
+    expect(src).toContain('scanPathForForbidden')
+    expect(src).toContain('scanTextForPersonalData')
   })
 })
