@@ -12,7 +12,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:install": "playwright install"
+    "test:e2e:install": "playwright install",
+    "prepare": "node scripts/setup-hooks.mjs",
+    "security:scan": "node scripts/security/scan-repository.mjs",
+    "security:scan:staged": "node scripts/security/scan-staged.mjs",
+    "security:public-boundary": "node scripts/security/scan-public-boundary.mjs",
+    "security:workflows": "node scripts/security/scan-workflows.mjs",
+    "security:all": "npm run security:scan && npm run security:public-boundary && npm run security:workflows",
+    "verify:commit": "npm run security:scan:staged && npm run lint && npm run typecheck && npm test",
+    "verify:push": "npm run security:all && npm run lint && npm run typecheck && npm test && npm run build && npm audit --audit-level=high && npm run test:e2e"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

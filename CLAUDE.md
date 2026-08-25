@@ -37,12 +37,14 @@ current/intended/deferred boundaries.
 - Before committing: review the actual diff (`git status`, `git diff`,
   `git diff --cached`) — don't stage blindly with `git add -A`. Confirm
   every changed file belongs to the task at hand.
-- Before committing code: run `npm run lint`, `npm run typecheck`,
-  `npm test`, and `npm run build`. All four should pass. If Playwright
-  specs are relevant to the change, run `npm run test:e2e` too.
-- Never bypass a hook or check to force a commit through. If something
-  can't run (missing tool, no network), that's unverified, not passing —
-  say so.
+- Before committing code: run `npm run verify:commit` (staged security scan,
+  lint, typecheck, unit tests). Before pushing: `npm run verify:push`, which
+  adds the build, the dependency audit, the full security scans, and the
+  Playwright suite. Git hooks run these automatically after `npm install`.
+- **Never bypass a hook or check.** `--no-verify` exists for a genuine
+  emergency and is not a way to get a commit through. If a check cannot run
+  (missing tool, no network), that is *unverified* — say so rather than
+  reporting a pass.
 - Prefer creating a new commit over amending, unless explicitly asked to
   amend.
 - Don't push or merge without the user's go-ahead, unless they've clearly
@@ -72,6 +74,22 @@ current/intended/deferred boundaries.
   `docs/private` branch instead — see that branch's `README.md`. This
   repo is public on GitHub; treat everything committed here as visible to
   anyone.
+- **Never commit real seller, supplier, prospect, interview, or applicant
+  data** — no names, emails, phone numbers, profile URLs, or exported
+  records. Fictional sample data must be obviously fictional.
+- **Never push a local-only validation branch.** Branches under
+  `validation/*` and `docs/private` exist only on the maintainer's machine
+  and must not be pushed, merged, or referenced in a public pull request.
+- Keep Skumetra separate from any employer system. Never use PJM or
+  Prudential accounts, storage, devices, or communication channels for this
+  project, and never commit material originating from them.
+- **Report security controls accurately.** A file existing in the repository
+  does not mean a GitHub-side control is active. Verify branch protection,
+  Dependabot, CodeQL, and Dependency Review through the GitHub API before
+  describing any of them as enabled, and say "external confirmation
+  required" when you cannot check.
+- Make no compliance or certification claims (SOC 2, ISO, PCI, "bank-grade",
+  "enterprise-grade"). None have been obtained.
 
 ## Documentation
 

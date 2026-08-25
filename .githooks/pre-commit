@@ -1,0 +1,10 @@
+#!/bin/sh
+# Skumetra pre-commit gate.
+#
+# Runs the fast checks that catch the mistakes worth catching before a commit
+# exists: staged credentials, private paths, lint, types, and unit tests.
+# Target runtime is well under 10s so this stays worth keeping enabled.
+#
+# Emergency bypass: git commit --no-verify   (see docs/project/TESTING_AND_SECURITY.md)
+set -e
+exec npm run --silent verify:commit

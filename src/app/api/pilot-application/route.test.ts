@@ -18,7 +18,7 @@ import { POST } from './route'
 
 const validApplication = {
   name: 'Jordan Reyes',
-  email: 'jordan@northline.com',
+  email: 'jordan@example.com',
   business: 'Northline Supply Co.',
   selling: 'yes',
   listings: '101-500',

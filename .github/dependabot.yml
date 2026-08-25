@@ -1,0 +1,52 @@
+version: 2
+
+# Routine version updates. Security updates are a separate GitHub feature and
+# are not configured here — they are enabled at the repository level so that
+# advisories are acted on regardless of this schedule.
+#
+# Nothing here auto-merges. Every update goes through the same pull-request
+# review and CI gate as any other change.
+
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: 'chore(deps)'
+      include: scope
+    groups:
+      # One PR for routine minor/patch bumps keeps the queue readable.
+      # Majors stay separate because they carry breaking changes and deserve
+      # individual review.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: 'chore(actions)'
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch

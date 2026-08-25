@@ -1,6 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const PORT = 3100
+// Overridable because a hardcoded port silently collides with anything else
+// listening locally. Combined with `reuseExistingServer` below, a collision
+// makes Playwright test whatever *else* owns the port and report confusing
+// element-not-found failures instead of a clear error.
+const PORT = Number(process.env.PLAYWRIGHT_PORT ?? 3100)
 const baseURL = `http://localhost:${PORT}`
 
 export default defineConfig({

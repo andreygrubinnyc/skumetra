@@ -3,7 +3,7 @@ import { pilotApplicationSchema } from './pilot-application-schema'
 
 const valid = {
   name: 'Jordan Reyes',
-  email: 'jordan@northline.com',
+  email: 'jordan@example.com',
   business: 'Northline Supply Co.',
   selling: 'yes',
   listings: '101-500',
@@ -90,9 +90,9 @@ describe('pilotApplicationSchema', () => {
   })
 
   it('lowercases and trims the email', () => {
-    const result = pilotApplicationSchema.safeParse({ ...valid, email: '  Jordan@Northline.COM  ' })
+    const result = pilotApplicationSchema.safeParse({ ...valid, email: '  Jordan@example.com  ' })
     expect(result.success).toBe(true)
-    if (result.success) expect(result.data.email).toBe('jordan@northline.com')
+    if (result.success) expect(result.data.email).toBe('jordan@example.com')
   })
 
   it('accepts an empty honeypot (the normal, legitimate case)', () => {
