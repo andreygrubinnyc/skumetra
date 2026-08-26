@@ -1,0 +1,240 @@
+name: Claude — issue to pull request
+
+# Turns an authorised, labelled issue into a reviewed pull request.
+#
+# The security decisions are NOT made in this file and NOT made by the model.
+# They are made by pure functions in scripts/automation/automation-core.mjs,
+# which are unit tested. A guard expressed only as a prompt instruction is a
+# guard that can be argued with; these cannot.
+#
+# Every Action is pinned to a full commit SHA — a tag can be repointed by an
+# upstream account compromise, a SHA cannot. The trailing comment records the
+# release the SHA corresponds to.
+#
+# Attacker-controlled text (issue title, issue body, branch names) is never
+# interpolated into a shell command or a workflow expression. It is read
+# through the event payload inside actions/github-script, where it stays data.
+
+on:
+  issues:
+    types: [labeled]
+
+# Least privilege at the top level; each job widens only what it needs.
+permissions: {}
+
+# One automation run per issue. Never cancel work in flight — a cancelled run
+# can leave the issue labelled in-progress with no branch to show for it.
+concurrency:
+  group: claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Authorisation and scope guard
+    # Cheap early exit: the other nine labels must not start a run.
+    if: github.event.label.name == 'ready-for-claude'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      authorized: ${{ steps.decide.outputs.authorized }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Evaluate authorisation
+        id: decide
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const core_ = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
+            const issue = context.payload.issue
+            const actor = context.payload.sender?.login
+
+            // Applying a label is not authority. On a public repository anyone
+            // with triage can label an issue, so the actor's actual repository
+            // permission is what decides. Fail closed: if the permission cannot
+            // be read, the answer is "no", not "probably fine".
+            let permission = null
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: actor,
+              })
+              permission = data.permission
+            } catch (error) {
+              // The permission endpoint can be unavailable to GITHUB_TOKEN
+              // depending on repository settings. The repository owner is
+              // unambiguous and comes from the event payload itself, so fall
+              // back to that rather than deadlocking the system. Everyone else
+              // still fails closed.
+              core.warning(`Could not read repository permission for ${actor}: ${error.message}`)
+              if (actor && actor === context.payload.repository?.owner?.login) {
+                core.info('Actor is the repository owner; treating as admin.')
+                permission = 'admin'
+              }
+            }
+
+            const decisions = [
+              core_.authorizeActor({ permission, actor }),
+              core_.validateTaskIssue({
+                labels: issue.labels,
+                body: issue.body ?? '',
+                state: issue.state,
+              }),
+            ]
+            const rejection = decisions.find((d) => !d.ok)
+
+            if (!rejection) {
+              core.setOutput('authorized', 'true')
+              core.info('Authorised. Handing the issue to Claude.')
+              return
+            }
+
+            core.setOutput('authorized', 'false')
+            core.warning(`Refused: ${rejection.reason}`)
+
+            // Remove the start label so the issue does not sit in a state that
+            // looks like work is under way. A private-data issue is never
+            // commented on with anything drawn from its own body.
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: 'ready-for-claude',
+              })
+            } catch (error) {
+              core.warning(`Could not remove the start label: ${error.message}`)
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: [
+                '**Automation did not start.**',
+                '',
+                rejection.reason,
+                '',
+                rejection.privateTask
+                  ? 'Tasks involving real seller, supplier, prospect or applicant data are handled locally and never through this public repository.'
+                  : 'Resolve the reason above and re-apply `ready-for-claude` to try again.',
+              ].join('\n'),
+            })
+
+  implement:
+    name: Implement, test and open a pull request
+    needs: guard
+    if: needs.guard.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      # Required by claude-code-action to exchange an OIDC token; it does not
+      # grant repository write access on its own.
+      id-token: write
+      # Read-only: lets the action report on its own run.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Mark the issue as in progress
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ['claude-in-progress'],
+            })
+
+      - name: Run Claude
+        id: claude
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          label_trigger: ready-for-claude
+          branch_prefix: claude/issue-
+          track_progress: true
+          claude_args: >-
+            --max-turns 80
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Verify the change stayed inside its authorised scope
+        # Runs whether or not Claude succeeded: a partially-completed run that
+        # touched the security system must still be caught and labelled.
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const core_ = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
+            const issue = context.payload.issue
+            const { owner, repo } = context.repo
+
+            const { data: pulls } = await github.rest.pulls.list({
+              owner, repo, state: 'open', per_page: 100,
+            })
+            const pr = pulls.find((p) => p.head.ref === core_.claudeBranchName(issue.number, issue.title))
+              || pulls.find((p) => new RegExp(`^claude/issue-${issue.number}-`).test(p.head.ref))
+
+            if (!pr) {
+              core.warning('No pull request was produced for this issue.')
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: issue.number, labels: ['automation-failed'],
+              })
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number: issue.number, name: 'claude-in-progress',
+              }).catch(() => {})
+              return
+            }
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner, repo, pull_number: pr.number, per_page: 300,
+            })
+            const scope = core_.checkProtectedPaths({
+              files: files.map((f) => f.filename),
+              issueLabels: issue.labels,
+            })
+
+            const labels = ['claude-managed']
+            if (scope.ok) {
+              labels.push('owner-review')
+            } else {
+              labels.push('blocked-owner-decision')
+              core.setFailed(scope.reason)
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pr.number,
+                body: `**Blocked — out of authorised scope.**\n\n${scope.reason}\n\nChanged protected paths:\n${scope.violations.map((v) => `- \`${v}\``).join('\n')}`,
+              })
+            }
+
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: pr.number, labels,
+            })
+            await github.rest.issues.removeLabel({
+              owner, repo, issue_number: issue.number, name: 'claude-in-progress',
+            }).catch(() => {})

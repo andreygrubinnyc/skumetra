@@ -45,6 +45,7 @@ for what's in each of the four releases.
 | [`docs/project/DECISION_LOG.md`](docs/project/DECISION_LOG.md) | Chronological decisions, with what superseded what |
 | [`docs/project/RELEASE_PLAN.md`](docs/project/RELEASE_PLAN.md) | The four releases — scope, exit criteria, current status |
 | [`docs/project/TESTING_AND_SECURITY.md`](docs/project/TESTING_AND_SECURITY.md) | Test coverage, CI, dependency audit, what's GitHub-side-unverified |
+| [`docs/project/CLAUDE_AUTOMATION.md`](docs/project/CLAUDE_AUTOMATION.md) | How work reaches production, and where the owner's two decisions sit |
 | [`docs/project/DEPLOYMENT_AND_OPERATIONS.md`](docs/project/DEPLOYMENT_AND_OPERATIONS.md) | Local dev, Vercel, Supabase, domains, monitoring |
 | [`docs/project/RISKS_AND_OPEN_QUESTIONS.md`](docs/project/RISKS_AND_OPEN_QUESTIONS.md) | Public-safe risks and open questions |
 | [`docs/project/IMPLEMENTATION_HISTORY.md`](docs/project/IMPLEMENTATION_HISTORY.md) | Meaningful completed changes, dated |

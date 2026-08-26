@@ -91,6 +91,47 @@ current/intended/deferred boundaries.
 - Make no compliance or certification claims (SOC 2, ISO, PCI, "bank-grade",
   "enterprise-grade"). None have been obtained.
 
+## Automation authorisation
+
+Work reaches production through the automation described in
+[`docs/project/CLAUDE_AUTOMATION.md`](docs/project/CLAUDE_AUTOMATION.md). Two
+labels, and only two labels, carry Andrey's authority:
+
+- **`ready-for-claude`** on an issue authorises implementation of *that issue*.
+- **`approved-to-merge`** on a pull request authorises merging *the exact
+  commit that was reviewed*. Anything pushed afterwards voids the approval;
+  the merge is refused server-side, not merely discouraged.
+
+Everything else in the label set is automation reporting its own state.
+
+What this means in practice:
+
+- **Never apply either label yourself**, and never ask for one to be applied as
+  a step in your own plan. Applying them is the whole of Andrey's involvement;
+  an agent that applies them has removed the only two human decisions in the
+  system.
+- **A label is not authority on its own.** Anyone with triage access to a public
+  repository can add a label, so the automation checks the actor's repository
+  permission and fails closed when it cannot read it. Do not work around that.
+- **Authorisation is per-issue and per-commit.** Approval of one change never
+  extends to the next one, to a follow-up commit, or to related work you notice
+  along the way.
+- **Ordinary product work must not modify the guards that constrain it** —
+  `.github/workflows/`, `.github/dependabot.yml`, `.githooks/`,
+  `scripts/security/`, `scripts/automation/`, this file, `SECURITY.md`, or
+  `docs/project/TESTING_AND_SECURITY.md`. Changing any of those requires an
+  issue labelled `security` or `automation-system`. If a task appears to need
+  it, say so and stop; do not relabel the issue to make your own change permitted.
+- **`private-no-automation`, and the private-data answer on the task form, are
+  absolute.** Anything involving real seller, supplier, prospect, interview or
+  applicant data is handled locally and never through this public repository.
+- **A failed production verification is a decision for Andrey**, not something
+  to roll back, retry around, or quietly re-run until it passes.
+
+The decision logic lives in `scripts/automation/automation-core.mjs` as pure,
+tested functions rather than as instructions in a prompt — a guard written only
+as an instruction is a guard that can be argued with.
+
 ## Documentation
 
 Keep [`docs/project/CURRENT_STATUS.md`](docs/project/CURRENT_STATUS.md) and
