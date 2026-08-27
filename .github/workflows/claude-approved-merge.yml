@@ -34,7 +34,7 @@ jobs:
       pull_number: ${{ steps.approve.outputs.pull_number }}
     steps:
       - name: Checkout trusted default-branch policy
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
@@ -183,7 +183,7 @@ jobs:
       statuses: read
     steps:
       - name: Checkout the exact merge commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The smoke script is deliberately the merged version: it verifies
           # that deployment, so it should be that deployment's own checks.
@@ -191,7 +191,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout the trusted policy from main
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The decisions below — which checks are required, and whether the
           # task is complete — come from main, never from the commit under
