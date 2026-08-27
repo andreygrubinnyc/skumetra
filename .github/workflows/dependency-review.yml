@@ -7,13 +7,15 @@ name: Dependency Review
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: dep-review-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-review:
@@ -26,7 +28,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Review dependency changes
+      - name: Review pull-request dependency changes
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           # Block only newly introduced high/critical advisories. Lower
@@ -35,4 +38,16 @@ jobs:
           # No license policy is declared: none has been approved for this
           # project, and inventing one would block contributions on a rule
           # nobody agreed to.
+          comment-summary-in-pr: never
+
+      - name: Review exact main-commit dependency changes
+        if: github.event_name == 'push'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # Non-PR events require both refs explicitly. This makes the
+          # Dependency review check attach to the exact pushed main SHA and
+          # compare it with the commit main pointed to immediately before it.
+          base-ref: ${{ github.event.before }}
+          head-ref: ${{ github.sha }}
+          fail-on-severity: high
           comment-summary-in-pr: never

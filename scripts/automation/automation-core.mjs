@@ -44,6 +44,33 @@ export const INFRASTRUCTURE_LABELS = new Set(['security', 'automation-system'])
 /** Claude-managed branches. Anchored: a suffix match would be forgeable. */
 export const CLAUDE_BRANCH_RE = /^claude\/issue-\d+-[a-z0-9][a-z0-9-]*$/
 
+/** Exact inputs supported by anthropics/claude-code-action v1.0.206. */
+export const CLAUDE_BRANCH_PREFIX = 'claude/'
+export const CLAUDE_BRANCH_TEMPLATE = '{{prefix}}{{entityType}}-{{entityNumber}}-{{description}}'
+
+/** Checks that may be corrected automatically without changing product scope. */
+export const REMEDIABLE_CHECK_RE =
+  /(lint|typecheck|test|build|end-to-end|accessibility|codeql|dependenc|vercel|security)/i
+
+/** Minimum PR checks. Repository rulesets may only add to this list. */
+export const PR_REQUIRED_CHECKS = [
+  'Lint, typecheck, test, build',
+  'Security scans and dependency audit',
+  'End-to-end and accessibility tests',
+  'Dependency review',
+  'CodeQL analysis',
+  'Vercel',
+]
+
+/** Checks that run on the exact merge commit on main. */
+export const MAIN_REQUIRED_CHECKS = [
+  'Lint, typecheck, test, build',
+  'Security scans and dependency audit',
+  'End-to-end and accessibility tests',
+  'Dependency review',
+  'CodeQL analysis',
+]
+
 /** Maximum automatic fix cycles before handing back to a human. */
 export const MAX_REMEDIATION_CYCLES = 2
 
@@ -156,6 +183,20 @@ export function checkProtectedPaths({ files = [], issueLabels = [] } = {}) {
   }
 }
 
+/** Whether implementation may advance to the independent-review job. */
+export function validateImplementationHandoff({
+  claudeSucceeded = false,
+  openPullRequests = 0,
+  scopeOk = false,
+} = {}) {
+  if (!claudeSucceeded) return { ok: false, reason: 'Claude implementation failed or was inconclusive.' }
+  if (openPullRequests !== 1) {
+    return { ok: false, reason: `Expected one open pull request; found ${openPullRequests}.` }
+  }
+  if (!scopeOk) return { ok: false, reason: 'The complete pull request is outside the authorised issue scope.' }
+  return { ok: true, reason: 'Implementation is eligible for independent review.' }
+}
+
 /* ------------------------------------------------------------------ *
  * Pull-request eligibility
  * ------------------------------------------------------------------ */
@@ -192,11 +233,13 @@ export function validatePullRequest({
     return fail('Dependabot pull requests are out of scope for this automation.')
   }
   if (!names.includes(LABELS.MANAGED)) return fail(`Pull request lacks ${LABELS.MANAGED}.`)
+  if (!names.includes(LABELS.OWNER_REVIEW)) return fail(`Pull request lacks ${LABELS.OWNER_REVIEW}.`)
   if (!CLAUDE_BRANCH_RE.test(headRef)) {
     return fail(`Head branch "${headRef}" does not match the claude/issue-<n>-<slug> scheme.`)
   }
   if (names.includes(LABELS.BLOCKED)) return fail(`Pull request carries ${LABELS.BLOCKED}.`)
   if (names.includes(LABELS.AUTOMATION_FAILED)) return fail(`Pull request carries ${LABELS.AUTOMATION_FAILED}.`)
+  if (names.includes(LABELS.PRODUCTION_FAILED)) return fail(`Pull request carries ${LABELS.PRODUCTION_FAILED}.`)
   if (!names.includes(LABELS.APPROVED)) return fail(`Pull request lacks ${LABELS.APPROVED}.`)
 
   return { ok: true, reason: 'Pull request is eligible for approved merge.' }
@@ -267,21 +310,95 @@ export function evaluateRequiredChecks({ requiredChecks = [], checkResults = [] 
   return { state: 'success', failed, pending, passed }
 }
 
+/**
+ * Builds the non-weakening union used by review and merge gates.
+ *
+ * The repository baseline is always present. Rulesets may add requirements,
+ * but removing a ruleset entry can never weaken the baseline.
+ */
+export function requiredCheckUnion({ baseline = [], rulesetChecks = [] } = {}) {
+  return [...new Set([...baseline, ...rulesetChecks].filter(Boolean))]
+}
+
 /* ------------------------------------------------------------------ *
  * Branch naming and cleanup
  * ------------------------------------------------------------------ */
 
+/** Exact description algorithm used by the pinned official action. */
+export function claudeBranchDescription(title = '') {
+  if (!String(title).trim()) return ''
+  return String(title)
+    .trim()
+    .split(/\s+/)
+    .slice(0, 5)
+    .join('-')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
 /** Deterministic Claude branch name for an issue. */
 export function claudeBranchName(issueNumber, title = '') {
-  const slug = String(title)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .split('-')
-    .filter(Boolean)
-    .slice(0, 5)
-    .join('-') || 'task'
-  return `claude/issue-${issueNumber}-${slug}`
+  const slug = claudeBranchDescription(title)
+  return `${CLAUDE_BRANCH_PREFIX}issue-${issueNumber}-${slug}`
+}
+
+/**
+ * Plans deterministic branch/PR handling for one issue.
+ *
+ * `matchingBranches` must come from GitHub's matching-refs endpoint and
+ * `pullRequests` from a head-filtered, paginated query. The function refuses
+ * ambiguity instead of guessing which work item to resume.
+ */
+export function planIssueWork({ issueNumber, title = '', matchingBranches = [], pullRequests = [] } = {}) {
+  const branch = claudeBranchName(issueNumber, title)
+  if (!claudeBranchDescription(title)) {
+    return { ok: false, state: 'invalid-title', branch, reason: 'Issue title cannot produce a safe branch slug.' }
+  }
+  const branches = [...new Set(matchingBranches.filter(Boolean))]
+  const exactPulls = pullRequests.filter((pr) => pr?.headRef === branch)
+  const openPulls = exactPulls.filter((pr) => pr.state === 'open')
+
+  if (branches.some((name) => name !== branch)) {
+    return {
+      ok: false,
+      state: 'ambiguous',
+      branch,
+      reason: `A different branch already claims issue #${issueNumber}; refusing to create or guess another.`,
+    }
+  }
+  if (branches.length > 1 || openPulls.length > 1 || exactPulls.length > 1) {
+    return { ok: false, state: 'ambiguous', branch, reason: 'More than one branch or pull request claims this issue.' }
+  }
+  if (openPulls.length === 1) {
+    return { ok: true, state: 'resume-pr', branch, pullRequest: openPulls[0] }
+  }
+  const merged = exactPulls.find((pr) => pr.merged)
+  if (merged) {
+    return { ok: false, state: 'merged', branch, pullRequest: merged, reason: 'The issue branch already has a merged pull request.' }
+  }
+  const closed = exactPulls.find((pr) => pr.state === 'closed')
+  if (closed) {
+    return {
+      ok: false,
+      state: 'closed',
+      branch,
+      pullRequest: closed,
+      reason: 'The issue branch has a closed, unmerged pull request; owner direction is required.',
+    }
+  }
+  if (branches.includes(branch)) return { ok: true, state: 'resume-branch', branch }
+  return { ok: true, state: 'start', branch }
+}
+
+/** Exact, whitespace-tolerant owner command accepted on a PR conversation. */
+export function validateApprovalCommand({ body = '', isPullRequest = false } = {}) {
+  if (!isPullRequest) return { ok: false, reason: 'The approval comment is not on a pull request.' }
+  if (String(body).trim() !== '/approve-merge') {
+    return { ok: false, reason: 'Comment is not the exact /approve-merge command.' }
+  }
+  return { ok: true, reason: 'Exact approval command received.' }
 }
 
 /**
@@ -327,4 +444,78 @@ export function issueNumberFromBranch(branch) {
 export function canRemediate(cycles, max = MAX_REMEDIATION_CYCLES) {
   const used = Number(cycles ?? 0)
   return { ok: used < max, used, remaining: Math.max(0, max - used) }
+}
+
+
+/**
+ * Decides the next review action without allowing a model to expand scope or
+ * reinterpret a failed gate.
+ */
+export function decideReviewGate({
+  scopeOk = false,
+  internalReview = 'failed',
+  checkVerdict = { state: 'pending', failed: [], pending: [] },
+  cycles = 0,
+} = {}) {
+  if (!scopeOk) return { state: 'blocked', reason: 'The pull request is outside the authorised issue scope.' }
+  if (internalReview === 'owner-decision') {
+    return { state: 'blocked', reason: 'Internal review found a genuine owner decision.' }
+  }
+  if (internalReview !== 'pass') {
+    return { state: 'failed', reason: 'Internal planner/QA/security/scope review did not pass conclusively.' }
+  }
+  if (checkVerdict.state === 'success') return { state: 'owner-review', reason: 'Every review and required check passed.' }
+  if (checkVerdict.state === 'pending') {
+    return { state: 'failed', reason: 'One or more required checks are missing or still pending.' }
+  }
+
+  const failures = checkVerdict.failed ?? []
+  const ineligible = failures.filter((f) => !REMEDIABLE_CHECK_RE.test(f.name ?? ''))
+  if (ineligible.length > 0) {
+    return { state: 'failed', reason: 'A failed required check is not eligible for automatic remediation.', ineligible }
+  }
+  const budget = canRemediate(cycles)
+  if (!budget.ok) {
+    const observed = failures.map((failure) => `${failure.name} (${failure.conclusion ?? 'failed'})`).join(', ')
+    return {
+      state: 'failed',
+      reason: `The two-cycle automatic remediation budget is exhausted${observed ? `; still failing: ${observed}` : ''}.`,
+      failures,
+    }
+  }
+  return { state: 'remediate', reason: 'Eligible checks failed inside the remediation budget.', cycle: budget.used + 1 }
+}
+
+/** Completion is atomic: all three post-merge gates must pass. */
+export function evaluatePostMergeGate({ mainChecks = 'pending', deployment = 'pending', smoke = 'pending' } = {}) {
+  const states = { mainChecks, deployment, smoke }
+  const failed = Object.entries(states).filter(([, value]) => value === 'failed').map(([name]) => name)
+  const pending = Object.entries(states).filter(([, value]) => value !== 'success' && value !== 'failed').map(([name]) => name)
+  if (failed.length) return { state: 'failed', failed, pending }
+  if (pending.length) return { state: 'pending', failed, pending }
+  return { state: 'success', failed, pending }
+}
+
+/** Exact production identity check; an empty or shortened SHA never matches. */
+export function exactDeploymentMatches(expected, observed) {
+  return /^[0-9a-f]{40}$/.test(String(expected ?? '')) && expected === observed
+}
+
+/** Pure minimum page gate used by the read-only production smoke. */
+export function evaluatePageSmoke({ status = 0, body = '', requiredText = [] } = {}) {
+  const missing = requiredText.filter((text) => !String(body).includes(text))
+  return { ok: status === 200 && missing.length === 0, status, missing }
+}
+
+/** Pure canonical-host redirect gate; substring matches are not sufficient. */
+export function evaluateApexRedirect({ status = 0, location = '', apexHost = '' } = {}) {
+  let destination = null
+  try {
+    destination = new URL(location)
+  } catch {
+    return { ok: false, reason: 'Redirect Location is not an absolute URL.' }
+  }
+  const ok = [301, 307, 308].includes(status) &&
+    destination.protocol === 'https:' && destination.hostname === apexHost
+  return { ok, status, destination: destination.href }
 }

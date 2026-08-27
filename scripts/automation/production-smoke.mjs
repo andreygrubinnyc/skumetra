@@ -7,10 +7,8 @@
  *
  * Deliberately read-only. The pilot form is the one place on the site where a
  * request creates a durable record about a real person, so this script never
- * POSTs to it. It proves the endpoint is deployed by confirming that a method
- * the route does not implement is rejected — which exercises routing without
- * creating an applicant record. Nothing here writes to Supabase, and nothing
- * here sends data that could be mistaken for a real application.
+ * POSTs to it. Nothing here writes to Supabase or sends data that could be
+ * mistaken for a real application. The public funnel is checked only with GET.
  *
  * With --expect-commit <sha> it first waits until /api/version reports that
  * commit, so a pass means the *new* deployment was verified rather than the
@@ -18,9 +16,16 @@
  *
  * Usage:  node scripts/automation/production-smoke.mjs [--base https://skumetra.com]
  *                                                      [--expect-commit <sha>]
+ *                                                      [--deployment-only]
+ *                                                      [--skip-deployment-wait]
  * Exit:   0 all checks passed · 1 check failed · 2 could not run
  */
 import process from 'node:process'
+import {
+  evaluateApexRedirect,
+  evaluatePageSmoke,
+  exactDeploymentMatches,
+} from './automation-core.mjs'
 
 const EXIT_OK = 0
 const EXIT_FAILED = 1
@@ -48,12 +53,19 @@ function arg(name, fallback) {
 
 const BASE = String(arg('base', process.env.PRODUCTION_BASE_URL || DEFAULT_BASE)).replace(/\/+$/, '')
 const EXPECT_COMMIT = arg('expect-commit', process.env.EXPECT_COMMIT || '')
+const DEPLOYMENT_ONLY = process.argv.includes('--deployment-only')
+const SKIP_DEPLOYMENT_WAIT = process.argv.includes('--skip-deployment-wait')
 
 const DEPLOY_WAIT_MS = 12 * 60 * 1000
 const DEPLOY_POLL_MS = 15_000
 
 if (EXPECT_COMMIT && !/^[0-9a-f]{40}$/.test(EXPECT_COMMIT)) {
   console.error('--expect-commit must be a full 40-character commit SHA.')
+  process.exit(EXIT_ERROR)
+}
+
+if (DEPLOYMENT_ONLY && !EXPECT_COMMIT) {
+  console.error('--deployment-only requires --expect-commit or EXPECT_COMMIT.')
   process.exit(EXIT_ERROR)
 }
 
@@ -107,8 +119,9 @@ function record(name, ok, detail) {
 async function checkLandingPage() {
   const response = await request(`${BASE}/`)
   const html = await response.text()
-  record('Landing page responds 200', response.status === 200, `HTTP ${response.status}`)
-  record('Landing page renders the product name', html.includes('Skumetra'))
+  const page = evaluatePageSmoke({ status: response.status, body: html, requiredText: ['Skumetra'] })
+  record('Landing page responds 200', page.status === 200, `HTTP ${page.status}`)
+  record('Landing page renders the product name', !page.missing.includes('Skumetra'))
   for (const { label, re } of FORBIDDEN_IN_HTML) {
     record(`Landing page does not expose ${label}`, !re.test(html))
   }
@@ -118,30 +131,34 @@ async function checkLandingPage() {
 async function checkPilotPage() {
   const response = await request(`${BASE}/pilot`)
   const html = await response.text()
-  record('Pilot page responds 200', response.status === 200, `HTTP ${response.status}`)
+  const page = evaluatePageSmoke({
+    status: response.status,
+    body: html,
+    requiredText: ['Apply for the Founding Seller Pilot', 'name="email"', 'name="honeypot"'],
+  })
+  record('Pilot page responds 200', page.status === 200, `HTTP ${page.status}`)
   record(
     'Pilot page renders its heading',
-    html.includes('Apply for the Founding Seller Pilot'),
+    !page.missing.includes('Apply for the Founding Seller Pilot'),
   )
-  record('Pilot page ships the application form', /<form\b/.test(html) && html.includes('name="email"'))
+  record('Pilot page ships the application form', /<form\b/.test(html) && !page.missing.includes('name="email"'))
   // The honeypot is server-rendered with the form, so its absence would mean
   // the anti-bot control did not ship even though the form did.
-  record('Pilot form still carries its honeypot field', html.includes('name="honeypot"'))
+  record('Pilot form still carries its honeypot field', !page.missing.includes('name="honeypot"'))
   for (const { label, re } of FORBIDDEN_IN_HTML) {
     record(`Pilot page does not expose ${label}`, !re.test(html))
   }
 }
 
-async function checkApplicationEndpointDeployed() {
-  // GET is not implemented by the route. Next.js answers 405, which proves the
-  // route is deployed and reachable — without submitting anything. This script
-  // must never create an applicant record in production.
-  const response = await request(`${BASE}/api/pilot-application`, { method: 'GET' })
-  record(
-    'Pilot application endpoint is deployed and rejects unsupported methods',
-    response.status === 405,
-    `HTTP ${response.status}`,
-  )
+async function checkLegalPage(path, heading) {
+  const response = await request(`${BASE}${path}`)
+  const html = await response.text()
+  const page = evaluatePageSmoke({ status: response.status, body: html, requiredText: [heading, 'Skumetra'] })
+  record(`${path} responds 200`, page.status === 200, `HTTP ${page.status}`)
+  record(`${path} renders ${heading}`, page.ok)
+  for (const { label, re } of FORBIDDEN_IN_HTML) {
+    record(`${path} does not expose ${label}`, !re.test(html))
+  }
 }
 
 async function checkWwwRedirect() {
@@ -155,9 +172,10 @@ async function checkWwwRedirect() {
     return
   }
   const location = response.headers.get('location') ?? ''
+  const redirect = evaluateApexRedirect({ status: response.status, location, apexHost: host })
   record(
     'www redirects to the apex domain',
-    [301, 307, 308].includes(response.status) && location.includes(host),
+    redirect.ok,
     `HTTP ${response.status} → ${location || '(no Location header)'}`,
   )
 }
@@ -179,7 +197,7 @@ async function waitForDeployment(expected) {
       if (response.status === 200) {
         const { commit } = await response.json()
         seen = commit
-        if (commit === expected) {
+        if (exactDeploymentMatches(expected, commit)) {
           record('Expected commit is live in production', true, expected.slice(0, 7))
           return true
         }
@@ -198,11 +216,25 @@ async function waitForDeployment(expected) {
   return false
 }
 
+async function verifyDeploymentOnce(expected) {
+  const response = await request(`${BASE}/api/version`)
+  if (response.status !== 200) {
+    record('Expected commit remains live in production', false, `HTTP ${response.status}`)
+    return false
+  }
+  const { commit } = await response.json()
+  const ok = exactDeploymentMatches(expected, commit)
+  record('Expected commit remains live in production', ok, commit || 'no commit')
+  return ok
+}
+
 async function main() {
   console.log(`Production smoke test — ${BASE}\n`)
 
   if (EXPECT_COMMIT) {
-    const live = await waitForDeployment(EXPECT_COMMIT)
+    const live = SKIP_DEPLOYMENT_WAIT
+      ? await verifyDeploymentOnce(EXPECT_COMMIT)
+      : await waitForDeployment(EXPECT_COMMIT)
     if (!live) {
       console.error('\nThe expected commit never reached production. Remaining checks would')
       console.error('have verified the previous deployment, so they were not run.\n')
@@ -210,9 +242,15 @@ async function main() {
     }
   }
 
+  if (DEPLOYMENT_ONLY) {
+    console.log('\nExact deployment commit verified. Read-only page smoke runs in the next gate.')
+    return EXIT_OK
+  }
+
   await checkLandingPage()
   await checkPilotPage()
-  await checkApplicationEndpointDeployed()
+  await checkLegalPage('/privacy', 'Privacy Policy')
+  await checkLegalPage('/terms', 'Terms of Service')
   await checkWwwRedirect()
 
   const failed = results.filter((r) => !r.ok)

@@ -1,7 +1,7 @@
 # Skumetra — Project Index
 
-**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-05
-**Verified against commit:** `31091a7` on `main`
+**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-27
+**Verified against:** `4e6138f` on `main` plus the complete PR #12 diff
 
 This is the starting point for a new person or AI session picking up this
 project. Read it first, then follow the order below.
@@ -23,6 +23,10 @@ application, and legal pages are live at `https://skumetra.com`, with a real
 [`docs/project/CURRENT_STATUS.md`](docs/project/CURRENT_STATUS.md) for the
 exact current state and [`docs/project/RELEASE_PLAN.md`](docs/project/RELEASE_PLAN.md)
 for what's in each of the four releases.
+
+The immediate repository milestone is owner review of PR #12, which completes
+the event-driven Claude development architecture. PR #12 is not a product
+release and must remain unmerged until its exact head and fresh checks pass.
 
 ## Recommended reading order
 

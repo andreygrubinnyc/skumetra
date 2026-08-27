@@ -16,8 +16,8 @@ export const LABEL_DEFINITIONS = [
   },
   {
     name: LABELS.APPROVED,
-    color: '0e8a16',
-    description: 'Owner approves merging the reviewed commit. Automation merges that exact SHA.',
+    color: '1d76db',
+    description: 'Internal state: owner comment accepted and bound to an exact SHA.',
   },
   {
     name: LABELS.IN_PROGRESS,
@@ -32,7 +32,7 @@ export const LABEL_DEFINITIONS = [
   {
     name: LABELS.OWNER_REVIEW,
     color: 'fbca04',
-    description: 'Ready for the owner review. This is decision two of two.',
+    description: 'All gates passed; owner may review and make decision two.',
   },
   {
     name: LABELS.BLOCKED,

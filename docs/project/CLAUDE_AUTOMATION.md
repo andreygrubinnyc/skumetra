@@ -1,211 +1,159 @@
 # Claude development automation
 
-How a work item goes from an idea to verified production, and where Andrey's
-two decisions sit.
+**Owner:** Andrey Grubin · **Status:** Repository architecture implemented;
+owner credential/label setup not performed · **Last verified:** 2026-08-27
 
-## The flow
+## Owner flow
 
-```
-Andrey writes an issue  (or asks Claude to write one)
-        │
-        ▼
-Andrey adds  ready-for-claude              ← DECISION 1
-        │
-        ▼
-guard job: is the labeller authorised? is the issue public and unblocked?
-        │  (fails closed — the label is removed and the issue is commented on)
-        ▼
-Claude plans, implements, writes tests, runs the local gates, opens a PR
-        │
-        ▼
-scope guard: did the change stay inside what the issue authorised?
-        │
-        ▼
-CI runs: lint · typecheck · unit · build · security scans · audit · e2e ·
-         dependency review · CodeQL
-        │
-        ▼
-PR is labelled  claude-managed  +  owner-review
-        │
-        ▼
-Andrey reviews once and adds  approved-to-merge          ← DECISION 2
-        │
-        ▼
-merge job: authorised actor? eligible PR? head still at the approved SHA?
-           all required checks green?
-        │
-        ▼
-merge commit — GitHub refuses it if the head moved since approval
-        │
-        ▼
-Vercel deploys to production
-        │
-        ▼
-smoke test waits for that exact commit to be live, then verifies the site
-        │
-        ├─ pass → issue commented, labelled completed, closed; branch deleted
-        └─ fail → issue labelled production-verification-failed and raised.
-                  No automatic rollback. This is Andrey's decision.
+1. Create a public, tightly scoped GitHub issue.
+2. Add `ready-for-claude` to authorise that issue.
+3. Wait until its single PR has `owner-review`.
+4. Review the complete diff and Vercel preview.
+5. Comment exactly `/approve-merge` on that PR.
+6. Automation merges the exact reviewed SHA, verifies the exact merge commit on
+   `main`, waits for that commit in production, runs read-only smoke checks,
+   then closes the issue and deletes only its Claude branch.
+
+No routine report relaying, task-output copying, or long approval command is
+part of the flow. GitHub is the handoff surface.
+
+## State machine
+
+```text
+issue + ready-for-claude                    owner decision 1
+  → consume ready-for-claude
+  → claude-in-progress
+  → claude/issue-<number>-<five-word-slug>
+  → one same-repository PR to main
+  → complete scope check
+  → independent planner/QA/security/scope review
+  → CI + audit + e2e + Dependency Review + CodeQL + Vercel
+  → at most two eligible automatic remediation cycles
+  → owner-review                             only when everything passes
+  → exact /approve-merge PR comment          owner decision 2
+  → internal approved-to-merge bound to current head SHA
+  → re-check exact SHA + required-check union
+  → normal merge commit with expected SHA
+  → exact production deployment
+  → read-only /, /pilot, /privacy, /terms and www redirect smoke
+  → exact main-commit required-check union
+  → completed + close issue + allow-listed branch deletion
 ```
 
-Two labels. Everything else is automation reporting its own state.
+Any missing, pending, partial, failed, or inconclusive implementation/review
+result goes to `automation-failed`, never `owner-review`. A genuine product or
+scope decision goes to `blocked-owner-decision`. A failed post-merge gate uses
+`production-verification-failed`, leaves the issue and branch open, and performs
+no rollback or automatic retry.
 
-## Where the decisions actually live
+## Deterministic issue identity and resume
 
-`scripts/automation/automation-core.mjs` holds every security-relevant decision
-as a pure function with no I/O. The workflows call those functions; they do not
-re-implement the logic in YAML, and they do not delegate it to the model.
+The pinned official `anthropics/claude-code-action` supports both:
 
-This is deliberate. A guard expressed as an instruction in a prompt is a guard
-that can be talked out of by a sufficiently persuasive issue body. A guard
-expressed as `if (!names.includes('approved-to-merge')) return fail(...)`
-cannot be. Every one of these functions is unit tested in
-`automation-core.test.mjs`, including the cases where it must refuse.
+```yaml
+branch_prefix: claude/
+branch_name_template: '{{prefix}}{{entityType}}-{{entityNumber}}-{{description}}'
+```
 
-| Function | Refuses when |
-| --- | --- |
-| `authorizeActor` | the actor lacks write/maintain/admin, or the permission could not be read |
-| `validateTaskIssue` | no `ready-for-claude`, or the task involves private data, or a decision is outstanding |
-| `checkProtectedPaths` | an ordinary issue changes the security or automation system |
-| `validatePullRequest` | fork, cross-repo, Dependabot, wrong base, wrong branch shape, missing label, draft |
-| `checkApprovalSha` | the head moved after approval |
-| `evaluateRequiredChecks` | a required check failed, or has not reported |
-| `isBranchDeletable` | the branch is anything other than a `claude/issue-<n>-<slug>` branch |
-| `canRemediate` | the automatic fix budget is exhausted |
+The action defines `description` as the first five whitespace-delimited title
+words, lower-cased and sanitized to kebab-case. `claudeBranchName()` implements
+that same algorithm and a regression test compares the workflow inputs with the
+pure-code constants. The guard queries GitHub's matching-ref endpoint and a
+head-filtered, paginated PR list. It starts only when neither exists, resumes an
+existing branch/PR, and refuses closed, merged, wrong-branch, or ambiguous
+states instead of guessing.
 
-## The labels
+The start label is consumed before Claude runs. Per-issue concurrency is serial
+and a queued duplicate event sees the consumed label and exits quietly.
+
+## Review and remediation
+
+The implementation session plans and implements only the issue. A separate
+Claude session then independently reviews the plan, full diff, tests, security,
+and scope. It fixes clear in-scope findings on the same branch. A structured
+result is required; missing/invalid output is failure, not success.
+
+External failures eligible for automatic correction are lint, typecheck, unit,
+build, e2e/accessibility, security, Dependency Review, CodeQL, and Vercel.
+Each correction uses the existing PR and issue branch. It must not weaken or
+skip tests, scanners, required checks, permissions, scope guards, or product
+constraints. Two cycles are the hard maximum. Unknown failures, a genuine owner
+decision, or exhaustion stop without another model attempt.
+
+Every PR-file read is fully paginated. Check runs and commit statuses are also
+fully paginated and evaluated against the exact current head SHA.
+
+## Owner approval and merge
+
+The protected merge workflow uses default-branch `issue_comment: created`, not
+`pull_request_target` and not a PR-supplied workflow definition. Only a comment
+whose trimmed body is exactly `/approve-merge` is considered. The commenter
+must have `write`, `maintain`, or `admin` permission.
+
+Before recording approval, automation fetches the current PR and requires:
+
+- open, non-draft, same-repository PR to `main`;
+- `claude/issue-<number>-<slug>` head, never Dependabot;
+- `claude-managed` and `owner-review`;
+- no blocked or failure label.
+
+Automation then adds the internal `approved-to-merge` state and binds it to the
+current head SHA. `validatePullRequest()` requires all three positive labels:
+`claude-managed`, `owner-review`, and `approved-to-merge`. Required checks are
+the union of the repository baseline and main's ruleset, so a ruleset can add a
+requirement but cannot weaken the baseline. Immediately before merge, the PR is
+fetched again. A changed head removes approval and owner-review, posts
+`OWNER RE-APPROVAL REQUIRED`, and does not merge. GitHub's merge API also
+receives the exact expected SHA as a final server-side binding.
+
+## Post-merge gates
+
+Completion is atomic across three distinct gates:
+
+1. `/api/version` reports the exact merge commit in production.
+2. Read-only smoke verifies `/`, `/pilot`, `/privacy`, `/terms`, and the
+   `www`→apex redirect while scanning public HTML for secret indicators.
+3. The non-weakening CI/security/e2e/Dependency Review/CodeQL union passes on
+   the exact merge commit on `main`.
+
+The smoke script never submits the pilot form and contains no POST request.
+Only all three successes permit `completed`, issue closure, or branch deletion.
+
+## Labels
 
 | Label | Meaning | Applied by |
 | --- | --- | --- |
-| `ready-for-claude` | Implement this issue | **Andrey** |
-| `approved-to-merge` | Merge the reviewed commit | **Andrey** |
-| `claude-in-progress` | Implementation under way | automation |
-| `claude-managed` | PR produced by automation | automation |
-| `owner-review` | Waiting on decision two | automation |
-| `blocked-owner-decision` | Stopped; needs a decision | either |
-| `automation-failed` | Automation could not finish | automation |
-| `production-verification-failed` | Merged, but production did not verify | automation |
-| `completed` | Merged and verified live | automation |
-| `private-no-automation` | Involves real data; never automate | Andrey |
+| `ready-for-claude` | Authorise implementation of this issue | owner |
+| `claude-in-progress` | One active issue run | automation |
+| `claude-managed` | PR belongs to this system | automation |
+| `owner-review` | All internal/external gates passed; owner may review | automation |
+| `approved-to-merge` | Internal record of an accepted comment and bound SHA | automation |
+| `blocked-owner-decision` | A genuine decision or ambiguous state stopped work | automation/owner |
+| `automation-failed` | Pre-merge automation failed or was inconclusive | automation |
+| `production-verification-failed` | Merge landed but a post-merge gate failed | automation |
+| `completed` | Exact merge commit verified through production | automation |
+| `private-no-automation` | Real/private data; public automation is prohibited | owner |
 
-Apply them to the repository with:
+`node scripts/automation/sync-labels.mjs` creates/corrects these labels but
+never deletes any other label. Owner-side label and credential setup is a
+separate protected step and has not been performed as part of PR #12.
 
-```bash
-node scripts/automation/sync-labels.mjs --dry-run
-node scripts/automation/sync-labels.mjs
-```
+## Authentication and permissions
 
-It creates and corrects; it never deletes.
+The pinned official action accepts either `ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN`. The workflow supplies both optional secret inputs and
+requires at least one, never both. Static API/OAuth authentication does not use
+OIDC, so no job receives `id-token: write`. GitHub token permissions are empty
+at workflow level and widened per job only for the reads/writes that job needs.
 
-## Design decisions worth knowing
+Do not paste or configure a credential through an issue, PR, chat, or automated
+implementation task. Owner credential setup remains pending.
 
-**Approval binds to a commit, not to a branch.** The SHA present when
-`approved-to-merge` is applied is passed to GitHub's merge API as its `sha`
-parameter. If anything is pushed to the branch afterwards, GitHub itself
-refuses the merge. A stale label cannot ship unreviewed code, and this does not
-depend on the workflow behaving correctly.
-
-**A check that never reported is pending, not passing.** `evaluateRequiredChecks`
-distinguishes failed from pending precisely so that "we never heard from CodeQL"
-cannot be read as "CodeQL was fine". If a required check does not report within
-thirty minutes the merge is refused rather than assumed.
-
-**The required-check list is a union.** The workflow reads main's ruleset and
-unions it with a hardcoded baseline. Adding a check to the ruleset tightens the
-automation automatically. Removing one from the ruleset cannot loosen it below
-the baseline.
-
-**Branch deletion is an allow-list.** Only `claude/issue-<n>-<slug>` is ever
-deletable. `main`, `dependabot/*`, `validation/*` and `docs/private` are refused
-by name, and so is anything else that does not match the pattern — a new branch
-category can never become deletable by omission.
-
-**Production verification waits for the right commit.** `/api/version` reports
-the deployed commit SHA, and the smoke test blocks until it matches the merge
-commit before checking anything else. Without that, every check could pass
-against the deployment the merge was supposed to replace.
-
-**Nothing is ever POSTed to the pilot form.** The application endpoint is the
-one place on the site where a request creates a durable record about a real
-person. The smoke test proves the route is deployed by confirming it rejects a
-method it does not implement, which exercises routing without creating an
-applicant record.
-
-**Failure is never papered over.** A failed production verification labels the
-issue, comments, and fails the run. There is no automatic rollback and no
-retry-until-green. The merge is already on `main`; what to do about it is a
-human decision.
-
-## Known residual risk
-
-The merge workflow triggers on `pull_request`, which means GitHub runs the
-workflow definition from the head branch. A pull request could therefore ship a
-modified version of the file that merges it.
-
-`pull_request_target` would put the workflow definition on the base branch, but
-it runs with repository secrets against untrusted code, and it is prohibited
-for this repository. The compensating controls are:
-
-1. Fork pull requests are rejected by `validatePullRequest`, and GitHub gives
-   them a read-only token regardless, so a fork cannot merge itself.
-2. Only an account with push access can create a same-repo head branch — an
-   account that could merge directly anyway.
-3. `main`'s ruleset is enforced by GitHub server-side. No workflow, however
-   modified, can merge past a required check that has not passed.
-
-The residual exposure is therefore an account with push access escalating to a
-merge it would not otherwise perform. That is governed by the ruleset and by
-who holds push access, not by this workflow. It is recorded here rather than
-left implicit.
-
-## One-time owner setup
-
-The automation needs an Anthropic credential, which is not currently configured
-on the repository. `gh api repos/andreygrubinnyc/skumetra/actions/secrets`
-returns no secrets.
-
-Until it is added, the guard job will run and the implementation job will fail
-at the Claude step. Nothing unsafe happens in the meantime — the system fails
-closed.
-
-To add it (Andrey, not Claude — never paste a credential into an issue, a pull
-request, or a chat):
-
-1. Create an API key at <https://console.anthropic.com/settings/keys>.
-2. Add it as a repository secret named `ANTHROPIC_API_KEY` under
-   **Settings → Secrets and variables → Actions**.
-3. Run `node scripts/automation/sync-labels.mjs` to create the ten labels.
-
-`GITHUB_TOKEN` is provided by Actions automatically; nothing is needed for it.
-
-## Running the pieces by hand
+## Local verification
 
 ```bash
-# Verify production right now
+npx vitest run scripts/automation/automation-core.test.mjs scripts/automation/github-api.test.mjs
+npm run security:workflows
 node scripts/automation/production-smoke.mjs
-
-# Verify a specific commit actually reached production
-node scripts/automation/production-smoke.mjs --expect-commit <sha>
-
-# Exercise every guard
-npx vitest run scripts/automation/automation-core.test.mjs
+node scripts/automation/production-smoke.mjs --expect-commit <full-sha>
 ```
-
-## Skills
-
-| Skill | Use it for |
-| --- | --- |
-| `skumetra-resume` | Rebuilding context at the start of a session |
-| `skumetra-next` | Deciding and writing the next work item |
-| `skumetra-review` | Preparing a pull request for the single owner review |
-| `skumetra-close` | Verifying production and updating the durable docs |
-
-## Subagents
-
-| Subagent | Use it for |
-| --- | --- |
-| `planner` | Turning an issue into a concrete, checkable plan |
-| `implementer` | Carrying out an agreed plan with its tests |
-| `qa-reviewer` | Whether it works and whether the tests would catch a regression |
-| `security-reviewer` | Injection, exposure, secrets, personal data, boundaries |
-| `scope-reviewer` | Whether the change stayed inside what the issue authorised |

@@ -2,10 +2,15 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import {
-  LABELS, MAX_REMEDIATION_CYCLES,
+  LABELS, MAX_REMEDIATION_CYCLES, CLAUDE_BRANCH_PREFIX, CLAUDE_BRANCH_TEMPLATE,
+  MAIN_REQUIRED_CHECKS,
   authorizeActor, validateTaskIssue, checkProtectedPaths, isProtectedPath,
-  validatePullRequest, checkApprovalSha, evaluateRequiredChecks,
-  claudeBranchName, isBranchDeletable, canRemediate, issueNumberFromBranch,
+  validateImplementationHandoff,
+  validatePullRequest, checkApprovalSha, evaluateRequiredChecks, requiredCheckUnion,
+  claudeBranchName, planIssueWork, validateApprovalCommand,
+  isBranchDeletable, canRemediate, decideReviewGate, evaluatePostMergeGate,
+  issueNumberFromBranch,
+  exactDeploymentMatches, evaluatePageSmoke, evaluateApexRedirect,
 } from './automation-core.mjs'
 import { LABEL_DEFINITIONS } from './labels.mjs'
 
@@ -126,7 +131,7 @@ describe('protected-path scope guard', () => {
 
 describe('pull-request eligibility', () => {
   const base = {
-    labels: [LABELS.MANAGED, LABELS.APPROVED],
+    labels: [LABELS.MANAGED, LABELS.OWNER_REVIEW, LABELS.APPROVED],
     headRef: 'claude/issue-42-import-column-preview',
     baseRef: 'main',
     headRepoFullName: 'andreygrubinnyc/skumetra',
@@ -154,11 +159,15 @@ describe('pull-request eligibility', () => {
   })
 
   it('rejects a PR without claude-managed', () => {
-    expect(validatePullRequest({ ...base, labels: [LABELS.APPROVED] }).ok).toBe(false)
+    expect(validatePullRequest({ ...base, labels: [LABELS.OWNER_REVIEW, LABELS.APPROVED] }).ok).toBe(false)
+  })
+
+  it('rejects a PR that has not reached owner-review', () => {
+    expect(validatePullRequest({ ...base, labels: [LABELS.MANAGED, LABELS.APPROVED] }).ok).toBe(false)
   })
 
   it('rejects a PR without approved-to-merge', () => {
-    expect(validatePullRequest({ ...base, labels: [LABELS.MANAGED] }).ok).toBe(false)
+    expect(validatePullRequest({ ...base, labels: [LABELS.MANAGED, LABELS.OWNER_REVIEW] }).ok).toBe(false)
   })
 
   it('rejects a non-Claude branch name even when labelled', () => {
@@ -171,11 +180,25 @@ describe('pull-request eligibility', () => {
   it('rejects a blocked or failed PR', () => {
     expect(validatePullRequest({ ...base, labels: [...base.labels, LABELS.BLOCKED] }).ok).toBe(false)
     expect(validatePullRequest({ ...base, labels: [...base.labels, LABELS.AUTOMATION_FAILED] }).ok).toBe(false)
+    expect(validatePullRequest({ ...base, labels: [...base.labels, LABELS.PRODUCTION_FAILED] }).ok).toBe(false)
   })
 
   it('rejects a draft or closed PR', () => {
     expect(validatePullRequest({ ...base, draft: true }).ok).toBe(false)
     expect(validatePullRequest({ ...base, state: 'closed' }).ok).toBe(false)
+  })
+})
+
+describe('implementation handoff', () => {
+  it('refuses failed Claude, missing or duplicate PRs, and scope failure', () => {
+    expect(validateImplementationHandoff({ claudeSucceeded: false, openPullRequests: 1, scopeOk: true }).ok).toBe(false)
+    expect(validateImplementationHandoff({ claudeSucceeded: true, openPullRequests: 0, scopeOk: true }).ok).toBe(false)
+    expect(validateImplementationHandoff({ claudeSucceeded: true, openPullRequests: 2, scopeOk: true }).ok).toBe(false)
+    expect(validateImplementationHandoff({ claudeSucceeded: true, openPullRequests: 1, scopeOk: false }).ok).toBe(false)
+  })
+
+  it('allows exactly one complete in-scope implementation into review', () => {
+    expect(validateImplementationHandoff({ claudeSucceeded: true, openPullRequests: 1, scopeOk: true }).ok).toBe(true)
   })
 })
 
@@ -241,6 +264,16 @@ describe('required-check verification', () => {
     })
     expect(r.state).toBe('pending')
   })
+
+  it('unions ruleset requirements with the non-weakening baseline', () => {
+    expect(requiredCheckUnion({ baseline: REQUIRED, rulesetChecks: ['Custom policy', REQUIRED[0]] }))
+      .toEqual([...REQUIRED, 'Custom policy'])
+    expect(requiredCheckUnion({ baseline: REQUIRED, rulesetChecks: [] })).toEqual(REQUIRED)
+  })
+
+  it('keeps Dependency review in the exact-main baseline', () => {
+    expect(MAIN_REQUIRED_CHECKS).toContain('Dependency review')
+  })
 })
 
 describe('branch naming and cleanup', () => {
@@ -248,15 +281,27 @@ describe('branch naming and cleanup', () => {
     // Five words of the title, kebab-cased.
     expect(claudeBranchName(42, 'Import column preview for supplier files'))
       .toBe('claude/issue-42-import-column-preview-for-supplier')
-    expect(claudeBranchName(7, '')).toBe('claude/issue-7-task')
+    expect(claudeBranchName(7, 'Fix foo/bar now')).toBe('claude/issue-7-fix-foobar-now')
   })
 
   it('produces a name its own validator accepts', () => {
     const name = claudeBranchName(42, 'Add supplier cost delta badge')
     expect(validatePullRequest({
-      labels: [LABELS.MANAGED, LABELS.APPROVED], headRef: name, baseRef: 'main',
+      labels: [LABELS.MANAGED, LABELS.OWNER_REVIEW, LABELS.APPROVED], headRef: name, baseRef: 'main',
       headRepoFullName: 'a/b', baseRepoFullName: 'a/b', authorLogin: 'andreygrubinnyc',
     }).ok).toBe(true)
+  })
+
+  it('keeps the pure builder aligned with the pinned action inputs', () => {
+    expect(CLAUDE_BRANCH_PREFIX).toBe('claude/')
+    expect(CLAUDE_BRANCH_TEMPLATE).toBe('{{prefix}}{{entityType}}-{{entityNumber}}-{{description}}')
+
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/claude-issue-to-pr.yml'), 'utf8')
+    expect(workflow).toContain(`branch_prefix: ${CLAUDE_BRANCH_PREFIX}`)
+    expect(workflow).toContain(`branch_name_template: '${CLAUDE_BRANCH_TEMPLATE}'`)
+    // Punctuation is removed inside each whitespace-delimited word rather
+    // than converted into an additional word, exactly as upstream does.
+    expect(claudeBranchName(7, 'Fix foo/bar now')).toBe('claude/issue-7-fix-foobar-now')
   })
 
   it('allows deleting a merged Claude task branch', () => {
@@ -289,6 +334,115 @@ describe('bounded remediation', () => {
 
   it('defaults to a bounded limit rather than unlimited', () => {
     expect(MAX_REMEDIATION_CYCLES).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('one issue, one branch, one active pull request', () => {
+  const issueNumber = 42
+  const title = 'Import column preview for supplier files'
+  const branch = claudeBranchName(issueNumber, title)
+
+  it('starts once when no branch or pull request exists', () => {
+    expect(planIssueWork({ issueNumber, title })).toMatchObject({ ok: true, state: 'start', branch })
+  })
+
+  it('rejects a title that cannot produce the action\'s required slug', () => {
+    expect(planIssueWork({ issueNumber, title: '🚀 🚀' }).state).toBe('invalid-title')
+  })
+
+  it('resumes an existing branch without creating another', () => {
+    expect(planIssueWork({ issueNumber, title, matchingBranches: [branch] }))
+      .toMatchObject({ ok: true, state: 'resume-branch', branch })
+  })
+
+  it('resumes the only open pull request', () => {
+    const pullRequest = { number: 9, headRef: branch, state: 'open', merged: false }
+    expect(planIssueWork({ issueNumber, title, matchingBranches: [branch], pullRequests: [pullRequest] }))
+      .toMatchObject({ ok: true, state: 'resume-pr', pullRequest })
+  })
+
+  it('fails closed for a wrong branch, duplicate PR, closed PR, or merged PR', () => {
+    expect(planIssueWork({ issueNumber, title, matchingBranches: [`claude/issue-${issueNumber}-wrong`] }).ok).toBe(false)
+    const open = { headRef: branch, state: 'open', merged: false }
+    expect(planIssueWork({ issueNumber, title, matchingBranches: [branch], pullRequests: [open, open] }).state).toBe('ambiguous')
+    expect(planIssueWork({ issueNumber, title, matchingBranches: [branch], pullRequests: [{ ...open, state: 'closed' }] }).state).toBe('closed')
+    expect(planIssueWork({ issueNumber, title, matchingBranches: [branch], pullRequests: [{ ...open, state: 'closed', merged: true }] }).state).toBe('merged')
+  })
+})
+
+describe('owner review and remediation gate', () => {
+  const success = { state: 'success', failed: [], pending: [] }
+  const failure = (name) => ({ state: 'failed', failed: [{ name, conclusion: 'failure' }], pending: [] })
+
+  it('adds owner-review only after scope, internal review, and all checks pass', () => {
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: success, cycles: 0 }).state)
+      .toBe('owner-review')
+  })
+
+  it('remediates eligible failures in cycles one and two, then stops', () => {
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: failure('Vercel'), cycles: 0 }))
+      .toMatchObject({ state: 'remediate', cycle: 1 })
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: failure('CodeQL analysis'), cycles: 1 }))
+      .toMatchObject({ state: 'remediate', cycle: 2 })
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: failure('Dependency review'), cycles: 2 }).state)
+      .toBe('failed')
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: failure('Dependency review'), cycles: 2 }).reason)
+      .toContain('Dependency review (failure)')
+  })
+
+  it('never bypasses pending, unknown, scope, or owner-decision failures', () => {
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: { state: 'pending' } }).state).toBe('failed')
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'pass', checkVerdict: failure('Unknown policy') }).state).toBe('failed')
+    expect(decideReviewGate({ scopeOk: false, internalReview: 'pass', checkVerdict: success }).state).toBe('blocked')
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'owner-decision', checkVerdict: success }).state).toBe('blocked')
+    expect(decideReviewGate({ scopeOk: true, internalReview: 'failed', checkVerdict: success }).state).toBe('failed')
+  })
+})
+
+describe('approval command', () => {
+  it('accepts only /approve-merge on a pull request, with surrounding whitespace', () => {
+    expect(validateApprovalCommand({ body: '  /approve-merge\n', isPullRequest: true }).ok).toBe(true)
+    expect(validateApprovalCommand({ body: '/approve-merge please', isPullRequest: true }).ok).toBe(false)
+    expect(validateApprovalCommand({ body: '/approve-merge', isPullRequest: false }).ok).toBe(false)
+  })
+})
+
+describe('post-merge completion gate', () => {
+  it('completes only when main checks, deployment, and smoke all pass', () => {
+    expect(evaluatePostMergeGate({ mainChecks: 'success', deployment: 'success', smoke: 'success' }).state)
+      .toBe('success')
+  })
+
+  it('distinguishes a main-check failure from an incomplete gate', () => {
+    expect(evaluatePostMergeGate({ mainChecks: 'failed', deployment: 'success', smoke: 'success' }))
+      .toMatchObject({ state: 'failed', failed: ['mainChecks'] })
+    expect(evaluatePostMergeGate({ mainChecks: 'success', deployment: 'pending', smoke: 'pending' }).state)
+      .toBe('pending')
+  })
+})
+
+describe('read-only production smoke decisions', () => {
+  const sha = 'a'.repeat(40)
+
+  it('continues only for the exact full production SHA', () => {
+    expect(exactDeploymentMatches(sha, sha)).toBe(true)
+    expect(exactDeploymentMatches(sha, 'b'.repeat(40))).toBe(false)
+    expect(exactDeploymentMatches(sha, sha.slice(0, 7))).toBe(false)
+  })
+
+  it('fails a missing Privacy or Terms identity', () => {
+    expect(evaluatePageSmoke({ status: 200, body: '<h1>Privacy Policy</h1>', requiredText: ['Privacy Policy', 'Skumetra'] }).ok)
+      .toBe(false)
+    expect(evaluatePageSmoke({ status: 200, body: '<h1>Terms of Service</h1> Skumetra', requiredText: ['Terms of Service', 'Skumetra'] }).ok)
+      .toBe(true)
+    expect(evaluatePageSmoke({ status: 500, body: 'Skumetra Terms of Service', requiredText: ['Terms of Service', 'Skumetra'] }).ok)
+      .toBe(false)
+  })
+
+  it('requires a redirect to the exact apex hostname', () => {
+    expect(evaluateApexRedirect({ status: 308, location: 'https://skumetra.com/', apexHost: 'skumetra.com' }).ok).toBe(true)
+    expect(evaluateApexRedirect({ status: 308, location: 'https://evil.example/?next=skumetra.com', apexHost: 'skumetra.com' }).ok).toBe(false)
+    expect(evaluateApexRedirect({ status: 200, location: 'https://skumetra.com/', apexHost: 'skumetra.com' }).ok).toBe(false)
   })
 })
 
@@ -330,6 +484,54 @@ describe('the issue template and the guards agree', () => {
         }
       }
     }
+  })
+
+  it('keeps protected approval on the default-branch issue-comment event', () => {
+    const yaml = read('.github/workflows/claude-approved-merge.yml')
+    expect(yaml).toContain('issue_comment:')
+    expect(yaml).toContain('types: [created]')
+    expect(yaml).toContain("ref: main")
+    expect(yaml).toContain('/approve-merge')
+    expect(yaml).toContain('sha: approvedSha')
+    expect(yaml).toContain('OWNER RE-APPROVAL REQUIRED')
+    expect(yaml).not.toContain('pull_request_target')
+  })
+
+  it('does not request OIDC and supports either official static credential', () => {
+    const yaml = read('.github/workflows/claude-issue-to-pr.yml')
+    expect(yaml).toContain('anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}')
+    expect(yaml).toContain('claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}')
+    expect(yaml).not.toContain('id-token: write')
+    expect(yaml).toContain('if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]')
+  })
+
+  it('consumes start authority and checks every continue-on-error Claude result', () => {
+    const yaml = read('.github/workflows/claude-issue-to-pr.yml')
+    expect(yaml.indexOf('await remove(issueNumber, policy.LABELS.READY)'))
+      .toBeLessThan(yaml.indexOf('Run Claude on a new deterministic branch'))
+    expect(yaml).toContain("CLAUDE_SUCCEEDED: ${{ steps.claude-new.outcome == 'success' || steps.claude-resume.outcome == 'success' }}")
+    expect(yaml).toContain('ACTION_OUTCOME: ${{ steps.internal-review.outcome }}')
+    expect(yaml).toContain('REMEDIATION_OUTCOME: ${{ steps.remediate-1.outcome }}')
+    expect(yaml).toContain('REMEDIATION_OUTCOME: ${{ steps.remediate-2.outcome }}')
+    expect(yaml).toContain('REVIEW_OUTCOME: ${{ steps.review-remediation-1.outcome }}')
+    expect(yaml).toContain('REVIEW_OUTCOME: ${{ steps.review-remediation-2.outcome }}')
+    expect(yaml).toContain('**AUTOMATION FAILED**')
+    expect(yaml).toContain('Attempts:\\n2')
+  })
+
+  it('runs Dependency review for PRs and exact main pushes', () => {
+    const yaml = read('.github/workflows/dependency-review.yml')
+    expect(yaml).toContain('pull_request:')
+    expect(yaml).toContain('branches: [main]')
+    expect(yaml).toContain('base-ref: ${{ github.event.before }}')
+    expect(yaml).toContain('head-ref: ${{ github.sha }}')
+  })
+
+  it('keeps production verification read-only and covers every public route', () => {
+    const smoke = read('scripts/automation/production-smoke.mjs')
+    for (const route of ['/api/version', '/pilot', '/privacy', '/terms']) expect(smoke).toContain(route)
+    expect(smoke).toContain('www redirects to the apex domain')
+    expect(smoke).not.toMatch(/method:\s*['"]POST['"]/)
   })
 })
 

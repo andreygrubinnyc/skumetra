@@ -95,24 +95,26 @@ current/intended/deferred boundaries.
 
 Work reaches production through the automation described in
 [`docs/project/CLAUDE_AUTOMATION.md`](docs/project/CLAUDE_AUTOMATION.md). Two
-labels, and only two labels, carry Andrey's authority:
+owner actions, and only these two actions, carry Andrey's authority:
 
 - **`ready-for-claude`** on an issue authorises implementation of *that issue*.
-- **`approved-to-merge`** on a pull request authorises merging *the exact
-  commit that was reviewed*. Anything pushed afterwards voids the approval;
-  the merge is refused server-side, not merely discouraged.
+- **An exact `/approve-merge` comment** on a PR with `owner-review` authorises
+  merging the current reviewed commit. Automation records the internal
+  `approved-to-merge` label and binds it to that SHA. Anything pushed
+  afterwards voids the approval; the merge is refused server-side, not merely
+  discouraged.
 
 Everything else in the label set is automation reporting its own state.
 
 What this means in practice:
 
-- **Never apply either label yourself**, and never ask for one to be applied as
-  a step in your own plan. Applying them is the whole of Andrey's involvement;
-  an agent that applies them has removed the only two human decisions in the
-  system.
-- **A label is not authority on its own.** Anyone with triage access to a public
-  repository can add a label, so the automation checks the actor's repository
-  permission and fails closed when it cannot read it. Do not work around that.
+- **Never apply `ready-for-claude` or synthesize `/approve-merge` yourself**,
+  and never ask for either as a step in your own implementation plan. They are
+  the two human decisions. `approved-to-merge` is automation-owned internal
+  state and must never be treated as authority by itself.
+- **A label or comment is not authority on its own.** The automation verifies
+  the actor/commenter's repository permission and fails closed when it cannot
+  read it. Do not work around that.
 - **Authorisation is per-issue and per-commit.** Approval of one change never
   extends to the next one, to a follow-up commit, or to related work you notice
   along the way.

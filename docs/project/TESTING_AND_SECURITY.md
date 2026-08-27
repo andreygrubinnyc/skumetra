@@ -1,26 +1,41 @@
 # Skumetra — Testing and Security
 
-**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-17
-**Verified against commit:** `8381c29` on `main`
+**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-27
+**Verified against:** `4e6138f` on `main` plus the complete PR #12 diff
 
-## Implemented and passing (verified today)
+## PR #12 verification scope
 
-- **Unit/component tests (Vitest):** 76/76 passing, re-run fresh 2026-08-05.
-  Covers the Zod schema, rate limiter, pilot-application repository +
-  fallback store, submission adapter, route handler (mocked Supabase client
-  and error reporter), and form component.
-- **Lint (ESLint, flat config):** 0 errors, 0 warnings as of 2026-08-05
-  (the two `jsx-a11y/role-supports-aria-props` warnings on the pilot form's
-  radiogroups were fixed by moving `aria-invalid`/`aria-describedby` to the
-  wrapping `<fieldset>`).
-- **Typecheck (`tsc --noEmit`):** clean.
-- **Production build:** succeeds.
-- **`npm audit`:** 0 vulnerabilities (after the `next` 15→16 / `vitest` 2→4
-  upgrade).
+PR #12 adds direct tests for deterministic Claude branch configuration,
+one-issue/one-branch/one-PR resume behavior, owner-review eligibility, the
+two-cycle remediation budget, exact owner approval, SHA binding, non-weakening
+required checks, post-merge completion, safe cleanup, workflow contracts, and
+pagination beyond the first 100/300 GitHub API results.
+
+The PR and main baselines both require Dependency Review. The Dependency Review
+workflow runs on pull requests and on pushes to `main`; the push path supplies
+the exact before/head refs required by the pinned official action. Post-merge
+verification unions the repository baseline with live ruleset requirements, so
+removing a ruleset entry cannot weaken the code baseline and adding one is
+honored automatically.
+
+## Implemented and passing
+
+- **Unit/component/policy tests (Vitest):** 312/312 passing across 16 files,
+  re-run fresh 2026-08-27. This includes 103 direct automation-core/API helper
+  tests as well as the product suite covering the Zod schema, rate limiter,
+  pilot-application repository and fallback store, submission adapter, route
+  handler, form component, and security scanners.
+- **Lint (ESLint, flat config):** 0 errors, 0 warnings on 2026-08-27.
+- **Typecheck (`tsc --noEmit`):** clean on 2026-08-27.
+- **Production build:** the supported Webpack production build completed on
+  2026-08-27. The exact default Turbopack command cannot create its local IPC
+  port inside the Codex desktop sandbox; the unchanged command remains enforced
+  by CI/pre-push and must pass on the fresh PR head before owner handoff.
+- **`npm audit`:** 0 vulnerabilities on 2026-08-27.
 - **E2E + accessibility (Playwright):** `tests/e2e/skumetra.spec.ts`,
-  `tests/e2e/accessibility.spec.ts` — 24/24 passing, re-run fresh
-  2026-08-05 (Desktop Chrome + mobile viewport). Includes 8 axe-core
-  WCAG 2.1 A/AA checks, 0 violations.
+  `tests/e2e/accessibility.spec.ts` — 24/24 passing on 2026-08-27 (Desktop
+  Chrome + mobile viewport), run against the local production build on safe
+  port 33127. Includes 8 axe-core WCAG 2.1 A/AA checks with 0 violations.
 - **Responsive breakpoints:** manually verified, no horizontal scroll, at
   375px, 768px, 1024px, and ~1600px across `/`, `/pilot`, `/privacy`,
   `/terms` — 2026-08-05.

@@ -7,7 +7,8 @@ body:
     attributes:
       value: |
         Filling this in is decision one of two. Nothing runs until you add the
-        `ready-for-claude` label; decision two is reviewing the pull request.
+        `ready-for-claude` label; decision two is reviewing the pull request
+        after it reaches `owner-review`, then commenting `/approve-merge`.
 
         **Do not paste real seller, supplier, prospect, interview or applicant
         data into this form.** This repository is public. If the task needs
