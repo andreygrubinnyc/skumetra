@@ -31,7 +31,7 @@ jobs:
       pull_number: ${{ steps.guard.outputs.pull_number }}
     steps:
       - name: Checkout the trusted policy from main
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Explicit, not the implicit default. This job's whole workspace is
           # the policy it enforces, and nothing Claude writes ever reaches it.
@@ -153,7 +153,7 @@ jobs:
     steps:
       - name: Checkout main for a new issue branch
         if: needs.guard.outputs.mode == 'start'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Explicit rather than implicit: which branch this starts from is a
           # decision, not a default.
@@ -163,7 +163,7 @@ jobs:
 
       - name: Checkout the exact existing issue branch
         if: needs.guard.outputs.mode != 'start'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard.outputs.branch }}
           fetch-depth: 0
@@ -231,7 +231,7 @@ jobs:
         # below reads its rules from this clone of main instead, so a run that
         # edited scripts/automation/ cannot be judged by its own edited copy.
         if: always()
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: .trusted-policy
@@ -414,7 +414,7 @@ jobs:
       failed_checks: ${{ steps.result.outputs.failed_checks }}
     steps:
       - name: Checkout the exact pull request branch
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.implement.outputs.branch }}
           fetch-depth: 0
@@ -470,7 +470,7 @@ jobs:
         # change it is about to judge. actions/checkout replaces the directory,
         # so each gate reads main as main actually is.
         if: always()
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: .trusted-policy
@@ -548,7 +548,7 @@ jobs:
         # change it is about to judge. actions/checkout replaces the directory,
         # so each gate reads main as main actually is.
         if: always()
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: .trusted-policy
@@ -635,7 +635,7 @@ jobs:
         # change it is about to judge. actions/checkout replaces the directory,
         # so each gate reads main as main actually is.
         if: always()
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: .trusted-policy
@@ -717,7 +717,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout the trusted policy from main
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
