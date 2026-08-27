@@ -38,9 +38,9 @@ body:
       label: Acceptance criteria
       description: Specific, checkable statements. These become the tests.
       value: |
-        - [ ] 
-        - [ ] 
-        - [ ] 
+        - [ ]
+        - [ ]
+        - [ ]
     validations:
       required: true
 
