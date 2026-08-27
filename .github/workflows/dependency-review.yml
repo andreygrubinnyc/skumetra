@@ -7,13 +7,16 @@ name: Dependency Review
 
 on:
   pull_request:
+  push:
+    # See ci.yml.
+    branches: [main, 'claude/issue-*']
 
 permissions:
   contents: read
 
 concurrency:
   group: dep-review-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-review:
@@ -24,9 +27,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          # Two commits: enough to resolve HEAD^ when a push reports no previous
+          # commit of its own.
+          fetch-depth: 2
           persist-credentials: false
 
-      - name: Review dependency changes
+      - name: Review pull-request dependency changes
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           # Block only newly introduced high/critical advisories. Lower
@@ -35,4 +42,40 @@ jobs:
           # No license policy is declared: none has been approved for this
           # project, and inventing one would block contributions on a rule
           # nobody agreed to.
+          comment-summary-in-pr: never
+
+      - name: Resolve the commits a pushed ref should be compared against
+        id: refs
+        if: github.event_name == 'push'
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_NAME" = "main" ]; then
+            # What main pointed at immediately before this push. An all-zero or
+            # absent value means GitHub recorded no previous commit, so fall
+            # back to the merge commit's first parent rather than skipping the
+            # check and leaving the post-merge gate waiting for ever.
+            base="$PUSH_BEFORE"
+            if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+              base="$(git rev-parse 'HEAD^')"
+            fi
+          else
+            # On a task branch the question is what the branch adds to main, not
+            # what the last push added to the branch — a dependency introduced by
+            # an earlier commit on the same branch must not go unreviewed.
+            base=main
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Review exact pushed-commit dependency changes
+        if: github.event_name == 'push'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # Non-PR events require both refs explicitly. This attaches the
+          # Dependency review check to the exact pushed SHA.
+          base-ref: ${{ steps.refs.outputs.base }}
+          head-ref: ${{ github.sha }}
+          fail-on-severity: high
           comment-summary-in-pr: never

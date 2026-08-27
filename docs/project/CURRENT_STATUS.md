@@ -1,7 +1,7 @@
 # Skumetra — Current Status
 
-**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-05
-**Verified against commit:** `31091a7` on `main` · **Authority:** current
+**Owner:** Andrey Grubin · **Status:** Active · **Last verified:** 2026-08-27
+**Verified against:** `4e6138f` on `main` plus the complete PR #12 diff · **Authority:** current
 state only — not a journal. See
 [`IMPLEMENTATION_HISTORY.md`](IMPLEMENTATION_HISTORY.md) for how we got here.
 
@@ -33,16 +33,19 @@ business activity tracked privately, not in this repository.
 - Responsive layout — manually verified with no horizontal scroll at 375px,
   768px, 1024px, and ~1600px across `/`, `/pilot`, `/privacy`, `/terms`
   (2026-08-05).
-- Full automated test suite: 76/76 Vitest unit/component tests passing as
-  of 2026-08-05. Playwright e2e + accessibility specs exist
-  (`tests/e2e/skumetra.spec.ts`, `tests/e2e/accessibility.spec.ts`); last
-  Playwright e2e + accessibility specs (`tests/e2e/skumetra.spec.ts`,
-  `tests/e2e/accessibility.spec.ts`) re-run fresh 2026-08-05: 24/24 passing
-  (Desktop Chrome + mobile viewport, including 8 axe-core WCAG 2.1 A/AA
-  checks with 0 violations).
+- Full automated suite includes the product tests plus direct automation-policy
+  and pagination tests. Fresh counts and commands are recorded in
+  `TESTING_AND_SECURITY.md`; Playwright covers desktop/mobile behavior and
+  axe-core WCAG 2.1 A/AA checks.
 - Production build succeeds. Lint and typecheck clean.
 - GitHub Actions CI (`.github/workflows/ci.yml`) — lint/typecheck/test/build
   on every PR and push to `main`.
+- PR #12 contains the repository-side event-driven Claude development system:
+  deterministic issue branches, one issue/branch/PR identity, independent
+  review, two-cycle bounded remediation, exact `/approve-merge` owner approval,
+  expected-SHA merge, and exact-commit post-merge verification. It is not active
+  on `main` until merged; owner-side Claude credential and label setup remain
+  deliberately unperformed.
 - Deployed to Vercel, live at `https://skumetra.com` (primary),
   `https://www.skumetra.com` (308 redirect to the primary), and
   `https://skumetra.vercel.app` (platform default) — all three independently
@@ -95,21 +98,24 @@ not functional capability. Don't describe them as working features.
 
 ## Blocked
 
-Nothing is currently blocked on a technical dependency. Seller outreach
-(a business activity, not a code task) is the practical next step and isn't
-blocked by anything in this repository.
+The repository-side automation architecture is complete in PR #12, but it must
+not merge until its exact head, complete diff, fresh PR checks, Vercel preview,
+and owner review pass. Owner-side Claude credential and label setup is a later
+protected step, not part of this PR.
 
-## Unknown — confirmation required
+## GitHub-side controls
 
-- Whether GitHub branch protection, required status checks, Dependabot, or
-  CodeQL are configured — none show up as repository files; this needs
-  direct verification in the GitHub UI. See
-  [`TESTING_AND_SECURITY.md`](TESTING_AND_SECURITY.md).
+Repository files define CI, Dependency Review, CodeQL, and Dependabot version
+updates. Their live GitHub settings must still be re-checked through the API at
+each protected handoff; a file alone is never reported as proof that a
+repository-side setting is active. See `TESTING_AND_SECURITY.md`.
 
 ## Immediate next steps
 
-1. Decide on Sentry/PostHog activation timing.
-2. Resolve the legal-entity-name/address/jurisdiction gap for Privacy/Terms
+1. Complete independent checks and owner review for PR #12 without merging it
+   early or performing owner setup.
+2. Decide on Sentry/PostHog activation timing.
+3. Resolve the legal-entity-name/address/jurisdiction gap for Privacy/Terms
    before treating them as launch-complete.
-3. Begin Release 2 planning (interactive product demonstration with
+4. Begin Release 2 planning (interactive product demonstration with
    realistic sample data) when ready — see `RELEASE_PLAN.md`.

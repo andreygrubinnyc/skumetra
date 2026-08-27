@@ -1,0 +1,318 @@
+name: Claude — owner-approved merge and production verification
+
+# This workflow is loaded only from the default branch. A PR cannot modify the
+# code that interprets its owner's approval. The exact, whitespace-tolerant
+# command is `/approve-merge`; all other comments are quiet no-ops.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: claude-merge-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Bind owner approval to one SHA and merge
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: read
+    outputs:
+      merged: ${{ steps.approve.outputs.merged }}
+      merge_sha: ${{ steps.approve.outputs.merge_sha }}
+      branch: ${{ steps.approve.outputs.branch }}
+      issue: ${{ steps.approve.outputs.issue }}
+      pull_number: ${{ steps.approve.outputs.pull_number }}
+    steps:
+      - name: Checkout trusted default-branch policy
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Validate command, approval and exact SHA
+        id: approve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const policy = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
+            const api = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/github-api.mjs`)
+            const { owner, repo } = context.repo
+            const pullNumber = context.payload.issue.number
+            const actor = context.payload.comment?.user?.login
+            core.setOutput('merged', 'false')
+            core.setOutput('pull_number', String(pullNumber))
+
+            const command = policy.validateApprovalCommand({
+              body: context.payload.comment?.body ?? '',
+              isPullRequest: Boolean(context.payload.issue.pull_request),
+            })
+            if (!command.ok) {
+              core.info(command.reason)
+              return
+            }
+
+            const remove = (name) => github.rest.issues.removeLabel({
+              owner, repo, issue_number: pullNumber, name,
+            }).catch(() => {})
+            const stop = async (reason, { stale = false } = {}) => {
+              core.setFailed(reason)
+              await remove(policy.LABELS.APPROVED)
+              if (stale) await remove(policy.LABELS.OWNER_REVIEW)
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pullNumber,
+                body: stale
+                  ? `**OWNER RE-APPROVAL REQUIRED**\n\n${reason}`
+                  : `**Merge refused.**\n\n${reason}`,
+              })
+            }
+
+            let permission = null
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: actor,
+              })
+              permission = response.data.permission
+            } catch (error) {
+              return stop(`Repository permission could not be verified for ${actor ?? 'the commenter'}: ${error.message}`)
+            }
+            const auth = policy.authorizeActor({ permission, actor })
+            if (!auth.ok) return stop(auth.reason)
+
+            const { data: initial } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber })
+            const proposedLabels = [
+              ...initial.labels.map((label) => label.name),
+              policy.LABELS.APPROVED,
+            ]
+            const eligibility = policy.validatePullRequest({
+              labels: proposedLabels,
+              headRef: initial.head.ref,
+              baseRef: initial.base.ref,
+              headRepoFullName: initial.head.repo?.full_name ?? '',
+              baseRepoFullName: initial.base.repo?.full_name ?? '',
+              authorLogin: initial.user?.login ?? '',
+              isFork: Boolean(initial.head.repo?.fork),
+              draft: initial.draft,
+              state: initial.state,
+            })
+            if (!eligibility.ok) return stop(eligibility.reason)
+
+            // Internal reporting label: the owner grants authority with the
+            // comment, and automation records the exact SHA under this label.
+            const approvedSha = initial.head.sha
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: pullNumber, labels: [policy.LABELS.APPROVED],
+            })
+            core.info(`Approval from ${actor} is bound to ${approvedSha}.`)
+
+            const requiredChecks = await api.nonWeakeningRequiredChecks(github, {
+              owner, repo, branch: 'main', baseline: policy.PR_REQUIRED_CHECKS, warn: core.warning,
+            })
+            const verdict = await api.waitForRequiredChecks({
+              github, owner, repo, ref: approvedSha, requiredChecks,
+              onPending: (state) => core.info(`Waiting on: ${state.pending.map((item) => item.name).join(', ')}`),
+            })
+            if (verdict.state === 'failed') {
+              return stop(`Required check(s) failed for ${approvedSha}: ${verdict.failed.map((item) => `${item.name} (${item.conclusion})`).join(', ')}`)
+            }
+            if (verdict.state !== 'success') {
+              return stop(`Required checks were missing or pending for ${approvedSha}: ${verdict.pending.map((item) => item.name).join(', ') || 'unknown'}.`)
+            }
+
+            let fresh = (await github.rest.pulls.get({ owner, repo, pull_number: pullNumber })).data
+            let binding = policy.checkApprovalSha({ approvedSha, currentSha: fresh.head.sha })
+            if (!binding.ok) return stop(binding.reason, { stale: true })
+
+            // Revalidate labels and PR identity after the wait. A block/failure
+            // label applied during approval must stop the merge.
+            const freshEligibility = policy.validatePullRequest({
+              labels: fresh.labels,
+              headRef: fresh.head.ref,
+              baseRef: fresh.base.ref,
+              headRepoFullName: fresh.head.repo?.full_name ?? '',
+              baseRepoFullName: fresh.base.repo?.full_name ?? '',
+              authorLogin: fresh.user?.login ?? '',
+              isFork: Boolean(fresh.head.repo?.fork),
+              draft: fresh.draft,
+              state: fresh.state,
+            })
+            if (!freshEligibility.ok) return stop(freshEligibility.reason)
+
+            // Last possible read before the server-side expected-SHA merge.
+            fresh = (await github.rest.pulls.get({ owner, repo, pull_number: pullNumber })).data
+            binding = policy.checkApprovalSha({ approvedSha, currentSha: fresh.head.sha })
+            if (!binding.ok) return stop(binding.reason, { stale: true })
+
+            let merge
+            try {
+              merge = (await github.rest.pulls.merge({
+                owner, repo, pull_number: pullNumber, merge_method: 'merge', sha: approvedSha,
+              })).data
+            } catch (error) {
+              return stop(`GitHub refused the expected-SHA merge: ${error.message}`)
+            }
+            if (!merge.merged || !merge.sha) return stop(`GitHub did not confirm the merge: ${merge.message ?? 'unknown reason'}`)
+
+            const issueNumber = policy.issueNumberFromBranch(initial.head.ref)
+            core.setOutput('merged', 'true')
+            core.setOutput('merge_sha', merge.sha)
+            core.setOutput('branch', initial.head.ref)
+            core.setOutput('issue', String(issueNumber ?? ''))
+            core.info(`Merged approved head ${approvedSha} as ${merge.sha}.`)
+
+  verify-production:
+    name: Verify exact main commit, deployment and read-only production smoke
+    needs: merge
+    if: needs.merge.outputs.merged == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: read
+    steps:
+      - name: Checkout the exact merge commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The smoke script is deliberately the merged version: it verifies
+          # that deployment, so it should be that deployment's own checks.
+          ref: ${{ needs.merge.outputs.merge_sha }}
+          persist-credentials: false
+
+      - name: Checkout the trusted policy from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The decisions below — which checks are required, and whether the
+          # task is complete — come from main, never from the commit under
+          # verification. Right after a merge the two are usually identical;
+          # "usually" is not a property worth depending on.
+          ref: main
+          path: .trusted-policy
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Wait for the exact production deployment
+        id: deployment
+        continue-on-error: true
+        env:
+          EXPECT_COMMIT: ${{ needs.merge.outputs.merge_sha }}
+        run: node scripts/automation/production-smoke.mjs --deployment-only
+
+      - name: Run read-only production smoke
+        id: smoke
+        if: steps.deployment.outcome == 'success'
+        continue-on-error: true
+        env:
+          EXPECT_COMMIT: ${{ needs.merge.outputs.merge_sha }}
+        run: node scripts/automation/production-smoke.mjs --skip-deployment-wait
+
+      - name: Wait for required checks on the exact main commit
+        id: main-checks
+        if: steps.deployment.outcome == 'success' && steps.smoke.outcome == 'success'
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          MERGE_SHA: ${{ needs.merge.outputs.merge_sha }}
+        with:
+          script: |
+            const policy = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/automation-core.mjs`)
+            const api = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/github-api.mjs`)
+            const requiredChecks = await api.nonWeakeningRequiredChecks(github, {
+              owner: context.repo.owner, repo: context.repo.repo, branch: 'main',
+              baseline: policy.MAIN_REQUIRED_CHECKS, warn: core.warning,
+            })
+            const verdict = await api.waitForRequiredChecks({
+              github, owner: context.repo.owner, repo: context.repo.repo,
+              ref: process.env.MERGE_SHA, requiredChecks,
+              onPending: (state) => core.info(`Waiting on main: ${state.pending.map((item) => item.name).join(', ')}`),
+            })
+            if (verdict.state !== 'success') core.setFailed(`Exact main-commit checks are ${verdict.state}.`)
+
+      - name: Record completion or preserve the failed task
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          MAIN_CHECKS: ${{ steps.main-checks.outcome }}
+          DEPLOYMENT: ${{ steps.deployment.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          MERGE_SHA: ${{ needs.merge.outputs.merge_sha }}
+          CLAUDE_BRANCH: ${{ needs.merge.outputs.branch }}
+          LINKED_ISSUE: ${{ needs.merge.outputs.issue }}
+          PULL_NUMBER: ${{ needs.merge.outputs.pull_number }}
+        with:
+          script: |
+            const policy = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/automation-core.mjs`)
+            const { owner, repo } = context.repo
+            const issueNumber = Number(process.env.LINKED_ISSUE || 0)
+            const pullNumber = Number(process.env.PULL_NUMBER)
+            const branch = process.env.CLAUDE_BRANCH
+            const sha = process.env.MERGE_SHA
+            const gate = policy.evaluatePostMergeGate({
+              mainChecks: process.env.MAIN_CHECKS === 'success' ? 'success' : 'failed',
+              deployment: process.env.DEPLOYMENT === 'success' ? 'success' : 'failed',
+              smoke: process.env.SMOKE === 'success' ? 'success' : 'failed',
+            })
+            const remove = (issue_number, name) => github.rest.issues.removeLabel({
+              owner, repo, issue_number, name,
+            }).catch(() => {})
+
+            if (gate.state !== 'success') {
+              core.setFailed(`Post-merge verification failed: ${gate.failed.join(', ')}`)
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: pullNumber, labels: [policy.LABELS.PRODUCTION_FAILED],
+              }).catch(() => {})
+              if (issueNumber) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: issueNumber, labels: [policy.LABELS.PRODUCTION_FAILED],
+                }).catch(() => {})
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: issueNumber,
+                  body: `**Post-merge verification failed for \`${sha}\`.**\n\nFailed gate(s): ${gate.failed.join(', ')}. The issue and branch remain open; no rollback or retry was performed.`,
+                }).catch(() => {})
+              }
+              return
+            }
+
+            await remove(pullNumber, policy.LABELS.APPROVED)
+            await remove(pullNumber, policy.LABELS.OWNER_REVIEW)
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: pullNumber, labels: [policy.LABELS.COMPLETED],
+            }).catch(() => {})
+            if (issueNumber) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: `Merged as \`${sha}\`; exact main checks, deployment, and read-only production smoke all passed.`,
+              }).catch(() => {})
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: issueNumber, labels: [policy.LABELS.COMPLETED],
+              }).catch(() => {})
+              for (const label of [policy.LABELS.IN_PROGRESS, policy.LABELS.OWNER_REVIEW, policy.LABELS.AUTOMATION_FAILED, policy.LABELS.PRODUCTION_FAILED]) {
+                await remove(issueNumber, label)
+              }
+              await github.rest.issues.update({
+                owner, repo, issue_number: issueNumber, state: 'closed', state_reason: 'completed',
+              })
+            }
+
+            const deletable = policy.isBranchDeletable(branch)
+            if (!deletable.ok) {
+              core.warning(`Branch preserved: ${deletable.reason}`)
+              return
+            }
+            await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` })

@@ -8,7 +8,13 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # Claude task branches are here for a reason. The automation's pushes are
+    # made by the Claude GitHub App, and a pull request opened afterwards by the
+    # repository GITHUB_TOKEN starts no workflow at all — GitHub suppresses its
+    # own token's events. Running on the branch push puts these check runs on
+    # the exact head SHA, which is what the pull request's required checks are
+    # evaluated against, so the gate has something real to wait for.
+    branches: [main, 'claude/issue-*']
 
 # Least privilege by default. No job here needs to write to the repository.
 permissions:

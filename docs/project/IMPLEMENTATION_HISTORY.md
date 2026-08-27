@@ -95,3 +95,20 @@ accessibility), and re-read every file for business-sensitive content.
 Found and fixed one issue — several public files named specific
 `docs/private` sub-filenames rather than pointing at the branch generally;
 generalized to branch-level mentions only.
+
+## 2026-08-27 — Event-driven Claude automation architecture (PR #12)
+
+Completed the repository-side architecture for issue-authorised development:
+deterministic `claude/issue-<n>-<slug>` branches using the pinned official
+action's explicit template, start-label consumption and deterministic resume,
+paginated security-sensitive GitHub reads, an independent structured
+planner/QA/security/scope review, and at most two eligible remediation cycles.
+
+Moved owner merge authority to an exact `/approve-merge` comment interpreted by
+a default-branch `issue_comment` workflow. The workflow verifies commenter
+permission, all required labels/checks, same-repository/non-Dependabot identity,
+and an unchanged expected head SHA before a normal merge commit. Completion now
+requires checks on the exact merge commit, the exact production deployment, and
+read-only smoke across `/`, `/pilot`, `/privacy`, `/terms`, and the www redirect.
+No credential/label setup, merge, deployment, or private/live-data operation was
+performed while implementing PR #12.

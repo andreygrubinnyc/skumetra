@@ -1,6 +1,6 @@
 # Skumetra — Decision Log
 
-**Owner:** Andrey Grubin · **Status:** Active (append-only) · **Last verified:** 2026-08-05
+**Owner:** Andrey Grubin · **Status:** Active (append-only) · **Last verified:** 2026-08-27
 
 Chronological. Superseded decisions are marked, not deleted. Business-
 sensitive decisions (pricing hypothesis specifics, validation-target
@@ -27,3 +27,4 @@ merged, and are not reproduced or named here.
 | 2026-08-05 | Grant `service_role` explicit table-level privileges on `pilot_applications` | Accepted, implemented | RLS-bypass and table-level `GRANT`s are separate in Postgres; the table lacked the grant, causing all production inserts to fail | `supabase/migrations/0001_create_pilot_applications.sql`; verified fixed via live re-test | Migration now self-sufficient for future re-runs |
 | 2026-08-05 | The parent-folder `SKUMETRA/CLAUDE.md` ("Mandatory Secure Commit Policy," Priorena-flavored) does **not** govern this repository; a new Skumetra-specific `CLAUDE.md` was created inside it | Accepted | That file is outside this Git repo and describes an unrelated project; left an open question (Q-002) by the prior session, resolved explicitly by Andrey 2026-08-05 | Andrey's Phase 2 decisions | This repo's `CLAUDE.md` now reflects Skumetra's actual workflow/security requirements |
 | 2026-08-05 | `skumetra.com` confirmed as the canonical production domain (with `www` 308-redirecting to it; `skumetra.vercel.app` also connected) | Accepted | Andrey confirmed; independently verified by direct request | Live `curl` checks against all three URLs, 2026-08-05 | `DEPLOYMENT_AND_OPERATIONS.md` treats `skumetra.com` as canonical |
+| 2026-08-27 | Use a default-branch exact `/approve-merge` PR comment for the second owner decision; keep `approved-to-merge` as internal SHA-bound state | Accepted, implemented in PR #12 | A PR-supplied labelled workflow could interpret its own approval; default-branch `issue_comment` keeps the authority code trusted without `pull_request_target` | Owner's PR #12 architecture specification; `.github/workflows/claude-approved-merge.yml` | Approval requires write/maintain/admin, all review labels/checks, and an unchanged expected SHA immediately before merge |

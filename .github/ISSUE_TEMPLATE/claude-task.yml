@@ -1,0 +1,100 @@
+name: Claude task
+description: A work item for Claude to implement, review and ship.
+title: "[task] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Filling this in is decision one of two. Nothing runs until you add the
+        `ready-for-claude` label; decision two is reviewing the pull request
+        after it reaches `owner-review`, then commenting `/approve-merge`.
+
+        **Do not paste real seller, supplier, prospect, interview or applicant
+        data into this form.** This repository is public. If the task needs
+        real data, answer the classification question below accordingly and
+        handle it locally instead.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What should be true when this is done? Describe the result, not the implementation.
+      placeholder: A seller can see which supplier columns were matched during import, before confirming.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why now
+      description: What problem does this solve, and why is it worth doing before other work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Specific, checkable statements. These become the tests.
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: classification
+    attributes:
+      label: Data classification
+      description: Automation refuses to run on anything involving real data, whether or not the label is applied.
+      options:
+        - Public / synthetic only
+        - Private / real seller data involved
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Area
+      options:
+        - Landing and marketing pages
+        - Pilot application funnel
+        - Safe price calculation (calc-v1)
+        - Import and data handling
+        - Documentation
+        - Security or automation system
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and non-goals
+      description: |
+        Anything that must not change. The locked product promise, pilot pricing,
+        legal text and product scope are fixed regardless of what is written here.
+      placeholder: Do not change the pricing table. Keep the existing URL.
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: |
+        Anything you have not decided. If a question here would change the
+        implementation, add `blocked-owner-decision` instead of `ready-for-claude`.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before labelling this ready
+      options:
+        - label: This task contains no real seller, supplier, prospect, interview or applicant data.
+          required: true
+        - label: This task contains no credentials, tokens or private file paths.
+          required: true
+        - label: This task does not change the locked product promise, pilot pricing, legal terms or product scope.
+          required: true

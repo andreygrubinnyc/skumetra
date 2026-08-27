@@ -1,0 +1,770 @@
+name: Claude — issue to reviewed pull request
+
+# A write-authorised `ready-for-claude` label starts exactly one issue run.
+# The label is consumed immediately; every later decision is deterministic
+# code in scripts/automation rather than a prompt instruction.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  group: claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Authorisation, consumption and deterministic resume
+    if: github.event.label.name == 'ready-for-claude'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      authorized: ${{ steps.guard.outputs.authorized }}
+      mode: ${{ steps.guard.outputs.mode }}
+      branch: ${{ steps.guard.outputs.branch }}
+      pull_number: ${{ steps.guard.outputs.pull_number }}
+    steps:
+      - name: Checkout the trusted policy from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Explicit, not the implicit default. This job's whole workspace is
+          # the policy it enforces, and nothing Claude writes ever reaches it.
+          ref: main
+          persist-credentials: false
+
+      - name: Guard and consume the start label
+        id: guard
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const policy = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
+            const api = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/github-api.mjs`)
+            const { owner, repo } = context.repo
+            const actor = context.payload.sender?.login
+            const issueNumber = context.payload.issue.number
+            core.setOutput('authorized', 'false')
+
+            const remove = (issue_number, name) => github.rest.issues.removeLabel({
+              owner, repo, issue_number, name,
+            }).catch(() => {})
+            const fail = async (reason, label = policy.LABELS.AUTOMATION_FAILED) => {
+              core.warning(reason)
+              await remove(issueNumber, policy.LABELS.READY)
+              await remove(issueNumber, policy.LABELS.IN_PROGRESS)
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: [label] })
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: `**Automation did not start.**\n\n${reason}`,
+              })
+            }
+
+            let permission = null
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: actor,
+              })
+              permission = response.data.permission
+            } catch (error) {
+              return fail(`Repository permission could not be verified for ${actor ?? 'the actor'}: ${error.message}`)
+            }
+            const actorDecision = policy.authorizeActor({ permission, actor })
+            if (!actorDecision.ok) return fail(actorDecision.reason)
+
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber })
+            const currentLabels = issue.labels.map((label) => label.name)
+            if (!currentLabels.includes(policy.LABELS.READY)) {
+              core.info('Start label was already consumed; duplicate event ignored.')
+              return
+            }
+
+            const issueDecision = policy.validateTaskIssue({ labels: issue.labels, body: issue.body ?? '', state: issue.state })
+            if (!issueDecision.ok) {
+              return fail(issueDecision.reason, issueDecision.privateTask ? policy.LABELS.PRIVATE : policy.LABELS.AUTOMATION_FAILED)
+            }
+
+            await remove(issueNumber, policy.LABELS.READY)
+            await remove(issueNumber, policy.LABELS.AUTOMATION_FAILED)
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: issueNumber, labels: [policy.LABELS.IN_PROGRESS],
+            })
+
+            const expectedBranch = policy.claudeBranchName(issueNumber, issue.title)
+            const refs = await api.listAllMatchingRefs(github, {
+              owner, repo, prefix: `claude/issue-${issueNumber}-`,
+            })
+            const branches = refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''))
+            const pulls = await api.listAllPullsForHead(github, { owner, repo, branch: expectedBranch })
+            const plan = policy.planIssueWork({
+              issueNumber,
+              title: issue.title,
+              matchingBranches: branches,
+              pullRequests: pulls.map((pr) => ({
+                number: pr.number, headRef: pr.head.ref, state: pr.state, merged: Boolean(pr.merged_at),
+              })),
+            })
+            if (!plan.ok) {
+              const label = ['closed', 'merged', 'ambiguous'].includes(plan.state)
+                ? policy.LABELS.BLOCKED
+                : policy.LABELS.AUTOMATION_FAILED
+              return fail(plan.reason, label)
+            }
+
+            if (plan.pullRequest) {
+              const pr = pulls.find((candidate) => candidate.number === plan.pullRequest.number)
+              const sameRepo = pr?.head.repo?.full_name === pr?.base.repo?.full_name
+              if (!pr || pr.base.ref !== 'main' || !sameRepo || /^dependabot\//.test(pr.head.ref)) {
+                return fail('The existing pull request is not a same-repository, non-Dependabot PR targeting main.', policy.LABELS.BLOCKED)
+              }
+              core.setOutput('pull_number', String(pr.number))
+            }
+            core.setOutput('authorized', 'true')
+            core.setOutput('mode', plan.state)
+            core.setOutput('branch', plan.branch)
+            core.info(`${plan.state}: ${plan.branch}`)
+
+  implement:
+    name: Plan, implement and establish one pull request
+    needs: guard
+    if: needs.guard.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
+      # Required — and only here. With no github_token input, the action calls
+      # core.getIDToken() and exchanges the result for a Claude GitHub App
+      # installation token (src/github/token.ts at the pinned SHA). That App
+      # identity is what makes its pushes start downstream CI; the repository
+      # GITHUB_TOKEN cannot, because GitHub suppresses its own token's events.
+      # It grants no repository write on its own.
+      id-token: write
+    outputs:
+      reviewable: ${{ steps.inspect.outputs.reviewable }}
+      pull_number: ${{ steps.inspect.outputs.pull_number }}
+      branch: ${{ steps.establish.outputs.branch || needs.guard.outputs.branch }}
+    steps:
+      - name: Checkout main for a new issue branch
+        if: needs.guard.outputs.mode == 'start'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Explicit rather than implicit: which branch this starts from is a
+          # decision, not a default.
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout the exact existing issue branch
+        if: needs.guard.outputs.mode != 'start'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.guard.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Require one supported Claude credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo 'Either ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is required.' >&2
+            exit 1
+          fi
+
+      - name: Run Claude on a new deterministic branch
+        id: claude-new
+        if: needs.guard.outputs.mode == 'start'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          label_trigger: ready-for-claude
+          branch_prefix: claude/
+          branch_name_template: '{{prefix}}{{entityType}}-{{entityNumber}}-{{description}}'
+          track_progress: true
+          claude_args: >-
+            --max-turns 80
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Resume Claude on the exact existing branch and PR
+        id: claude-resume
+        if: needs.guard.outputs.mode != 'start'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        env:
+          CLAUDE_BRANCH: ${{ needs.guard.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          prompt: |
+            Resume the existing Claude-managed work for issue #${{ github.event.issue.number }} on the checked-out branch.
+            Read the issue and existing pull request from GitHub. Use exactly this branch and update or create exactly one PR to main.
+            Plan first, implement only the issue acceptance criteria, run the repository verification, and do not broaden scope.
+            Do not merge, weaken tests or scanners, alter permissions to bypass a gate, or touch real/private data.
+          claude_args: >-
+            --max-turns 80
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Refresh the trusted policy from main
+        # The workspace above is the branch Claude just wrote. Every decision
+        # below reads its rules from this clone of main instead, so a run that
+        # edited scripts/automation/ cannot be judged by its own edited copy.
+        if: always()
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          path: .trusted-policy
+          persist-credentials: false
+
+      - name: Establish exactly one pull request
+        id: establish
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          EXPECTED_BRANCH: ${{ needs.guard.outputs.branch }}
+          REPORTED_BRANCH: ${{ steps.claude-new.outputs.branch_name || steps.claude-resume.outputs.branch_name }}
+          CLAUDE_SUCCEEDED: ${{ steps.claude-new.outcome == 'success' || steps.claude-resume.outcome == 'success' }}
+        with:
+          script: |
+            const policy = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/automation-core.mjs`)
+            const api = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/github-api.mjs`)
+            const { owner, repo } = context.repo
+            const issueNumber = context.payload.issue.number
+            core.setOutput('branch', '')
+
+            if (process.env.CLAUDE_SUCCEEDED !== 'true') {
+              core.info('Claude did not complete; the inspect step will record the failure.')
+              return
+            }
+
+            // The action reports the branch it actually used, which is
+            // authoritative: it falls back to its timestamped default when the
+            // templated name is already taken. Both forms satisfy the validator.
+            const reported = String(process.env.REPORTED_BRANCH || '')
+            const branch =
+              policy.CLAUDE_BRANCH_RE.test(reported) &&
+              policy.issueNumberFromBranch(reported) === issueNumber
+                ? reported
+                : String(process.env.EXPECTED_BRANCH || '')
+            if (!policy.CLAUDE_BRANCH_RE.test(branch)) {
+              core.warning(`No usable Claude branch was reported ("${reported}").`)
+              return
+            }
+            core.setOutput('branch', branch)
+
+            const open = (await api.listAllPullsForHead(github, { owner, repo, branch }))
+              .filter((pr) => pr.state === 'open')
+            if (open.length > 0) {
+              core.info(`Pull request #${open[0].number} already exists for ${branch}.`)
+              return
+            }
+
+            // The official action pushes a branch and posts a "Create a PR"
+            // link; it does not open pull requests (verified in
+            // src/entrypoints/update-comment-link.ts at the pinned SHA). Without
+            // this step the handoff check finds zero open pull requests and every
+            // run fails. Opening it deterministically also means the title, the
+            // base and the issue link are not left to the model.
+            let comparison
+            try {
+              comparison = (await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `main...${branch}`,
+              })).data
+            } catch (error) {
+              core.warning(`Could not compare ${branch} with main: ${error.message}`)
+              return
+            }
+            if (comparison.ahead_by === 0) {
+              core.warning(`Branch ${branch} has no commits ahead of main.`)
+              return
+            }
+
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber })
+            try {
+              const { data: pr } = await github.rest.pulls.create({
+                owner, repo, head: branch, base: 'main',
+                title: issue.title,
+                body: [
+                  `Closes #${issueNumber}.`,
+                  '',
+                  'Opened by the Claude automation. It is not ready for review until the',
+                  `pipeline applies \`${policy.LABELS.OWNER_REVIEW}\`: the independent review and`,
+                  'every required check have to pass first.',
+                  '',
+                  'Approve by commenting `/approve-merge` on this pull request.',
+                ].join('\n'),
+              })
+              core.info(`Opened pull request #${pr.number} for ${branch}.`)
+            } catch (error) {
+              core.warning(`Could not open a pull request for ${branch}: ${error.message}`)
+            }
+
+      - name: Inspect the complete pull request and scope
+        id: inspect
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          EXPECTED_BRANCH: ${{ steps.establish.outputs.branch || needs.guard.outputs.branch }}
+          CLAUDE_SUCCEEDED: ${{ steps.claude-new.outcome == 'success' || steps.claude-resume.outcome == 'success' }}
+        with:
+          script: |
+            const policy = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/automation-core.mjs`)
+            const api = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/github-api.mjs`)
+            const { owner, repo } = context.repo
+            const issueNumber = context.payload.issue.number
+            const branch = process.env.EXPECTED_BRANCH
+            core.setOutput('reviewable', 'false')
+            const remove = (issue_number, name) => github.rest.issues.removeLabel({ owner, repo, issue_number, name }).catch(() => {})
+            const fail = async (reason, pullNumber = 0, label = policy.LABELS.AUTOMATION_FAILED) => {
+              core.setFailed(reason)
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: [label] })
+              await remove(issueNumber, policy.LABELS.IN_PROGRESS)
+              if (pullNumber) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pullNumber, labels: [label] })
+                await remove(pullNumber, policy.LABELS.OWNER_REVIEW)
+                await remove(pullNumber, policy.LABELS.APPROVED)
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: pullNumber,
+                  body: `**Automation stopped before owner review.**\n\n${reason}`,
+                })
+              } else {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: issueNumber,
+                  body: `**Automation stopped before a pull request was ready.**\n\n${reason}`,
+                })
+              }
+            }
+
+            const pulls = await api.listAllPullsForHead(github, { owner, repo, branch })
+            const open = pulls.filter((pr) => pr.state === 'open')
+            const implementation = policy.validateImplementationHandoff({
+              claudeSucceeded: process.env.CLAUDE_SUCCEEDED === 'true',
+              openPullRequests: open.length,
+              scopeOk: true,
+            })
+            if (!implementation.ok) return fail(implementation.reason)
+            const pr = open[0]
+            core.setOutput('pull_number', String(pr.number))
+            if (pr.base.ref !== 'main' || pr.head.repo?.full_name !== pr.base.repo?.full_name || /^dependabot\//.test(pr.head.ref)) {
+              return fail('The produced PR is not a same-repository, non-Dependabot PR targeting main.', pr.number, policy.LABELS.BLOCKED)
+            }
+
+            const [{ data: issue }, files] = await Promise.all([
+              github.rest.issues.get({ owner, repo, issue_number: issueNumber }),
+              api.listAllPullFiles(github, { owner, repo, pullNumber: pr.number }),
+            ])
+            const scope = policy.checkProtectedPaths({ files: files.map((file) => file.filename), issueLabels: issue.labels })
+            const handoff = policy.validateImplementationHandoff({
+              claudeSucceeded: true,
+              openPullRequests: 1,
+              scopeOk: scope.ok,
+            })
+            if (!handoff.ok) return fail(scope.reason ?? handoff.reason, pr.number, policy.LABELS.BLOCKED)
+
+            await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [policy.LABELS.MANAGED] })
+            for (const label of [policy.LABELS.OWNER_REVIEW, policy.LABELS.APPROVED, policy.LABELS.AUTOMATION_FAILED]) {
+              await remove(pr.number, label)
+            }
+            core.setOutput('reviewable', 'true')
+
+  review-and-remediate:
+    name: Independent review and bounded remediation
+    needs: [guard, implement]
+    if: needs.implement.outputs.reviewable == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: read
+      # See the implement job: needed for the Claude GitHub App token exchange,
+      # and for nothing else.
+      id-token: write
+    outputs:
+      decision: ${{ steps.result.outputs.decision }}
+      reason: ${{ steps.result.outputs.reason }}
+      head_sha: ${{ steps.result.outputs.head_sha }}
+      attempts: ${{ steps.result.outputs.attempts }}
+      failed_checks: ${{ steps.result.outputs.failed_checks }}
+    steps:
+      - name: Checkout the exact pull request branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.implement.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Independent planner, QA, security and scope review
+        id: internal-review
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        env:
+          CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          prompt: |
+            Act as a fresh internal reviewer for issue #${{ github.event.issue.number }} and its existing PR.
+            Independently inspect the issue, complete diff, tests, architecture, security, and authorised scope.
+            Check the implementer's plan against the acceptance criteria. Fix every clear in-scope finding on the same branch and rerun relevant verification.
+            Never broaden scope, weaken tests or scanners, bypass permissions, merge, use real/private data, or change a decided product constraint.
+            If a genuine product decision is required, do not guess or work around it; return owner-decision. Return pass only after all findings are fixed.
+          claude_args: >-
+            --max-turns 60
+            --json-schema
+            '{"type":"object","properties":{"decision":{"type":"string","enum":["pass","owner-decision"]},"summary":{"type":"string"}},"required":["decision","summary"],"additionalProperties":false}'
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Interpret independent review
+        id: review-state
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ACTION_OUTCOME: ${{ steps.internal-review.outcome }}
+          STRUCTURED_OUTPUT: ${{ steps.internal-review.outputs.structured_output }}
+        with:
+          script: |
+            if (process.env.ACTION_OUTCOME !== 'success') {
+              core.setOutput('decision', 'failed')
+              return
+            }
+            try {
+              const parsed = JSON.parse(process.env.STRUCTURED_OUTPUT || '{}')
+              core.setOutput('decision', ['pass', 'owner-decision'].includes(parsed.decision) ? parsed.decision : 'failed')
+            } catch {
+              core.setOutput('decision', 'failed')
+            }
+
+      - name: Refresh the trusted policy from main
+        # Re-cloned immediately before every deterministic decision, never
+        # earlier. Claude holds Write on this workspace between gate steps, so a
+        # copy taken once at the top of the job could be edited by the very
+        # change it is about to judge. actions/checkout replaces the directory,
+        # so each gate reads main as main actually is.
+        if: always()
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          path: .trusted-policy
+          persist-credentials: false
+
+      - name: Evaluate gate after internal review
+        id: gate-1
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          BRANCH: ${{ needs.implement.outputs.branch }}
+          PULL_NUMBER: ${{ needs.implement.outputs.pull_number }}
+          INTERNAL_REVIEW: ${{ steps.review-state.outputs.decision }}
+        with:
+          script: |
+            const gate = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/review-gate.mjs`)
+            const result = await gate.runPullRequestGate({
+              github, log: core.info, warn: core.warning,
+              owner: context.repo.owner, repo: context.repo.repo,
+              pullNumber: Number(process.env.PULL_NUMBER), issueNumber: context.payload.issue.number,
+              expectedBranch: process.env.BRANCH, internalReview: process.env.INTERNAL_REVIEW, cycles: 0,
+            })
+            core.setOutput('decision', result.state)
+            core.setOutput('reason', result.reason)
+            core.setOutput('head_sha', result.headSha ?? '')
+            core.setOutput('failed_checks', (result.checkVerdict?.failed ?? []).map((item) => `${item.name} (${item.conclusion})`).join(', '))
+
+      - name: Automatic remediation cycle 1
+        id: remediate-1
+        if: steps.gate-1.outputs.decision == 'remediate'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        env:
+          CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          prompt: |
+            Remediation cycle 1 of 2 for the existing PR for issue #${{ github.event.issue.number }}.
+            Inspect the exact failing CI, dependency, CodeQL, Vercel, or security evidence and fix only its root cause on this branch.
+            Stay inside the issue acceptance criteria. Do not weaken or skip tests, scanners, checks, permissions, or product constraints. Do not merge.
+          claude_args: >-
+            --max-turns 50
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Independently review remediation cycle 1
+        id: review-remediation-1
+        if: steps.remediate-1.outcome == 'success'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        env:
+          CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          prompt: |
+            Independently review remediation cycle 1 for issue #${{ github.event.issue.number }}.
+            Inspect the full PR and verify the remediation fixed the root cause without weakening tests, scanners, checks, permissions, scope guards, or product constraints.
+            Fix any clear in-scope defect on the same branch and rerun relevant checks. If a genuine decision is needed, return owner-decision. Otherwise return pass only when clean.
+          claude_args: >-
+            --max-turns 40
+            --json-schema
+            '{"type":"object","properties":{"decision":{"type":"string","enum":["pass","owner-decision"]},"summary":{"type":"string"}},"required":["decision","summary"],"additionalProperties":false}'
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Refresh the trusted policy from main
+        # Re-cloned immediately before every deterministic decision, never
+        # earlier. Claude holds Write on this workspace between gate steps, so a
+        # copy taken once at the top of the job could be edited by the very
+        # change it is about to judge. actions/checkout replaces the directory,
+        # so each gate reads main as main actually is.
+        if: always()
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          path: .trusted-policy
+          persist-credentials: false
+
+      - name: Evaluate gate after remediation cycle 1
+        id: gate-2
+        if: always() && steps.gate-1.outputs.decision == 'remediate'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          BRANCH: ${{ needs.implement.outputs.branch }}
+          PULL_NUMBER: ${{ needs.implement.outputs.pull_number }}
+          REMEDIATION_OUTCOME: ${{ steps.remediate-1.outcome }}
+          REVIEW_OUTCOME: ${{ steps.review-remediation-1.outcome }}
+          REVIEW_OUTPUT: ${{ steps.review-remediation-1.outputs.structured_output }}
+        with:
+          script: |
+            const gate = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/review-gate.mjs`)
+            let internalReview = 'failed'
+            if (process.env.REMEDIATION_OUTCOME === 'success' && process.env.REVIEW_OUTCOME === 'success') {
+              try {
+                const parsed = JSON.parse(process.env.REVIEW_OUTPUT || '{}')
+                internalReview = ['pass', 'owner-decision'].includes(parsed.decision) ? parsed.decision : 'failed'
+              } catch {}
+            }
+            const result = await gate.runPullRequestGate({
+              github, log: core.info, warn: core.warning,
+              owner: context.repo.owner, repo: context.repo.repo,
+              pullNumber: Number(process.env.PULL_NUMBER), issueNumber: context.payload.issue.number,
+              expectedBranch: process.env.BRANCH, internalReview, cycles: 1,
+            })
+            core.setOutput('decision', result.state)
+            core.setOutput('reason', result.reason)
+            core.setOutput('head_sha', result.headSha ?? '')
+            core.setOutput('failed_checks', (result.checkVerdict?.failed ?? []).map((item) => `${item.name} (${item.conclusion})`).join(', '))
+
+      - name: Automatic remediation cycle 2
+        id: remediate-2
+        if: steps.gate-2.outputs.decision == 'remediate'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        env:
+          CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          prompt: |
+            Remediation cycle 2 of 2 for the existing PR for issue #${{ github.event.issue.number }}.
+            Inspect the exact remaining eligible failure and fix only its root cause on this branch.
+            This is the final automatic attempt. Do not weaken or skip tests, scanners, checks, permissions, scope, or product constraints. Do not merge.
+          claude_args: >-
+            --max-turns 50
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Independently review remediation cycle 2
+        id: review-remediation-2
+        if: steps.remediate-2.outcome == 'success'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        env:
+          CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          base_branch: main
+          prompt: |
+            Independently review final remediation cycle 2 for issue #${{ github.event.issue.number }}.
+            Inspect the full PR and prove no test, scanner, required check, permission, scope guard, or product constraint was weakened.
+            Fix any clear in-scope defect on the same branch and rerun relevant checks. If a genuine decision is needed, return owner-decision. Otherwise return pass only when clean.
+          claude_args: >-
+            --max-turns 40
+            --json-schema
+            '{"type":"object","properties":{"decision":{"type":"string","enum":["pass","owner-decision"]},"summary":{"type":"string"}},"required":["decision","summary"],"additionalProperties":false}'
+            --allowed-tools
+            Bash(npm ci),Bash(npm run lint),Bash(npm run typecheck),Bash(npm test),Bash(npm run build),Bash(npm run security:*),Bash(npm run verify:*),Bash(git*),Read,Edit,Write,Glob,Grep
+
+      - name: Refresh the trusted policy from main
+        # Re-cloned immediately before every deterministic decision, never
+        # earlier. Claude holds Write on this workspace between gate steps, so a
+        # copy taken once at the top of the job could be edited by the very
+        # change it is about to judge. actions/checkout replaces the directory,
+        # so each gate reads main as main actually is.
+        if: always()
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          path: .trusted-policy
+          persist-credentials: false
+
+      - name: Evaluate final gate after remediation cycle 2
+        id: gate-3
+        if: always() && steps.gate-2.outputs.decision == 'remediate'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
+          BRANCH: ${{ needs.implement.outputs.branch }}
+          PULL_NUMBER: ${{ needs.implement.outputs.pull_number }}
+          REMEDIATION_OUTCOME: ${{ steps.remediate-2.outcome }}
+          REVIEW_OUTCOME: ${{ steps.review-remediation-2.outcome }}
+          REVIEW_OUTPUT: ${{ steps.review-remediation-2.outputs.structured_output }}
+        with:
+          script: |
+            const gate = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/review-gate.mjs`)
+            let internalReview = 'failed'
+            if (process.env.REMEDIATION_OUTCOME === 'success' && process.env.REVIEW_OUTCOME === 'success') {
+              try {
+                const parsed = JSON.parse(process.env.REVIEW_OUTPUT || '{}')
+                internalReview = ['pass', 'owner-decision'].includes(parsed.decision) ? parsed.decision : 'failed'
+              } catch {}
+            }
+            const result = await gate.runPullRequestGate({
+              github, log: core.info, warn: core.warning,
+              owner: context.repo.owner, repo: context.repo.repo,
+              pullNumber: Number(process.env.PULL_NUMBER), issueNumber: context.payload.issue.number,
+              expectedBranch: process.env.BRANCH, internalReview, cycles: 2,
+            })
+            core.setOutput('decision', result.state)
+            core.setOutput('reason', result.reason)
+            core.setOutput('head_sha', result.headSha ?? '')
+            core.setOutput('failed_checks', (result.checkVerdict?.failed ?? []).map((item) => `${item.name} (${item.conclusion})`).join(', '))
+
+      - name: Select terminal result
+        id: result
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          GATE_1: ${{ steps.gate-1.outputs.decision }}
+          GATE_1_REASON: ${{ steps.gate-1.outputs.reason }}
+          GATE_1_SHA: ${{ steps.gate-1.outputs.head_sha }}
+          GATE_2: ${{ steps.gate-2.outputs.decision }}
+          GATE_2_REASON: ${{ steps.gate-2.outputs.reason }}
+          GATE_2_SHA: ${{ steps.gate-2.outputs.head_sha }}
+          GATE_3: ${{ steps.gate-3.outputs.decision }}
+          GATE_3_REASON: ${{ steps.gate-3.outputs.reason }}
+          GATE_3_SHA: ${{ steps.gate-3.outputs.head_sha }}
+          GATE_1_FAILED: ${{ steps.gate-1.outputs.failed_checks }}
+          GATE_2_FAILED: ${{ steps.gate-2.outputs.failed_checks }}
+          GATE_3_FAILED: ${{ steps.gate-3.outputs.failed_checks }}
+        with:
+          script: |
+            const terminal = process.env.GATE_3 || process.env.GATE_2 || process.env.GATE_1 || 'failed'
+            const suffix = process.env.GATE_3 ? '3' : process.env.GATE_2 ? '2' : '1'
+            core.setOutput('decision', terminal === 'remediate' ? 'failed' : terminal)
+            core.setOutput('reason', process.env[`GATE_${suffix}_REASON`] || 'The review gate did not complete conclusively.')
+            core.setOutput('head_sha', process.env[`GATE_${suffix}_SHA`] || '')
+            core.setOutput('attempts', String(Number(suffix) - 1))
+            core.setOutput('failed_checks', process.env[`GATE_${suffix}_FAILED`] || '')
+
+  finalize:
+    name: Publish the terminal review state
+    needs: [guard, implement, review-and-remediate]
+    if: always() && needs.guard.outputs.authorized == 'true' && needs.implement.outputs.reviewable == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # contents: read is the whole reason this is here — the job below imports
+      # its label vocabulary and terminal-state rules from a checkout, and
+      # without one GITHUB_WORKSPACE is an empty directory and the import throws
+      # ERR_MODULE_NOT_FOUND. This job applies owner-review, so nothing could
+      # ever reach the owner while it failed on its first line.
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout the trusted policy from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Apply one terminal state
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DECISION: ${{ needs.review-and-remediate.outputs.decision }}
+          REASON: ${{ needs.review-and-remediate.outputs.reason }}
+          HEAD_SHA: ${{ needs.review-and-remediate.outputs.head_sha }}
+          ATTEMPTS: ${{ needs.review-and-remediate.outputs.attempts }}
+          FAILED_CHECKS: ${{ needs.review-and-remediate.outputs.failed_checks }}
+          PULL_NUMBER: ${{ needs.implement.outputs.pull_number }}
+        with:
+          script: |
+            const policy = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
+            const { owner, repo } = context.repo
+            const issueNumber = context.payload.issue.number
+            const pullNumber = Number(process.env.PULL_NUMBER)
+            const decision = process.env.DECISION || 'failed'
+            const reason = process.env.REASON || 'The automation did not complete conclusively.'
+            const remove = (issue_number, name) => github.rest.issues.removeLabel({ owner, repo, issue_number, name }).catch(() => {})
+
+            await remove(issueNumber, policy.LABELS.IN_PROGRESS)
+            await remove(pullNumber, policy.LABELS.APPROVED)
+            await remove(pullNumber, policy.LABELS.OWNER_REVIEW)
+
+            if (decision === 'owner-review') {
+              await remove(pullNumber, policy.LABELS.AUTOMATION_FAILED)
+              await remove(pullNumber, policy.LABELS.BLOCKED)
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: pullNumber, labels: [policy.LABELS.MANAGED, policy.LABELS.OWNER_REVIEW],
+              })
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pullNumber,
+                body: `**Ready for owner review at \`${process.env.HEAD_SHA}\`.**\n\nReview the preview and diff. If satisfied, comment \`/approve-merge\` on this PR.`,
+              })
+              return
+            }
+
+            const label = decision === 'blocked' ? policy.LABELS.BLOCKED : policy.LABELS.AUTOMATION_FAILED
+            await github.rest.issues.addLabels({ owner, repo, issue_number: pullNumber, labels: [label] })
+            await github.rest.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: [label] })
+            const exhausted = label === policy.LABELS.AUTOMATION_FAILED && process.env.ATTEMPTS === '2'
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pullNumber,
+              body: exhausted
+                ? `**AUTOMATION FAILED**\n\nFailing check:\n${process.env.FAILED_CHECKS || 'Unknown'}\n\nAttempts:\n2\n\nLast observed cause:\n${reason}\n\nOwner decision required:\nNo`
+                : `**Automation stopped before owner review.**\n\n${reason}`,
+            })

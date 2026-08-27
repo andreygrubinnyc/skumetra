@@ -8,7 +8,9 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    # See ci.yml: a Claude task branch needs its required checks to land on the
+    # pushed SHA, because the pull request that follows cannot trigger them.
+    branches: [main, 'claude/issue-*']
   schedule:
     # Mondays 06:17 UTC. Off the hour to avoid the top-of-hour runner queue.
     - cron: '17 6 * * 1'
