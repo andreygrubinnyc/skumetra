@@ -285,10 +285,20 @@ export function checkApprovalSha({ approvedSha, currentSha } = {}) {
  */
 export function evaluateRequiredChecks({ requiredChecks = [], checkResults = [] } = {}) {
   const byName = new Map()
+  const done = (r) => (r.status ?? 'completed') === 'completed' && r.conclusion != null
   for (const r of checkResults) {
-    // Keep the most decisive result when a check reports more than once.
+    // A check reports more than once whenever a run is retried, and now
+    // routinely: a Claude branch push and the pull-request synchronize it
+    // causes both produce a run of the same name on the same SHA. Prefer a
+    // finished result over a running one, and the newer of two finished ones —
+    // otherwise a stale failure permanently masks the success that fixed it and
+    // remediation could never clear a check it had already failed once.
     const existing = byName.get(r.name)
-    if (!existing || existing.conclusion == null) byName.set(r.name, r)
+    if (!existing) { byName.set(r.name, r); continue }
+    if (!done(existing) && done(r)) { byName.set(r.name, r); continue }
+    if (done(existing) && done(r) && String(r.startedAt ?? '') > String(existing.startedAt ?? '')) {
+      byName.set(r.name, r)
+    }
   }
 
   const failed = []

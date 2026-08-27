@@ -185,7 +185,20 @@ jobs:
       - name: Checkout the exact merge commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          # The smoke script is deliberately the merged version: it verifies
+          # that deployment, so it should be that deployment's own checks.
           ref: ${{ needs.merge.outputs.merge_sha }}
+          persist-credentials: false
+
+      - name: Checkout the trusted policy from main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The decisions below — which checks are required, and whether the
+          # task is complete — come from main, never from the commit under
+          # verification. Right after a merge the two are usually identical;
+          # "usually" is not a property worth depending on.
+          ref: main
+          path: .trusted-policy
           persist-credentials: false
 
       - name: Set up Node
@@ -214,11 +227,12 @@ jobs:
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
           MERGE_SHA: ${{ needs.merge.outputs.merge_sha }}
         with:
           script: |
-            const policy = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
-            const api = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/github-api.mjs`)
+            const policy = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/automation-core.mjs`)
+            const api = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/github-api.mjs`)
             const requiredChecks = await api.nonWeakeningRequiredChecks(github, {
               owner: context.repo.owner, repo: context.repo.repo, branch: 'main',
               baseline: policy.MAIN_REQUIRED_CHECKS, warn: core.warning,
@@ -233,6 +247,7 @@ jobs:
       - name: Record completion or preserve the failed task
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy
           MAIN_CHECKS: ${{ steps.main-checks.outcome }}
           DEPLOYMENT: ${{ steps.deployment.outcome }}
           SMOKE: ${{ steps.smoke.outcome }}
@@ -242,7 +257,7 @@ jobs:
           PULL_NUMBER: ${{ needs.merge.outputs.pull_number }}
         with:
           script: |
-            const policy = await import(`${process.env.GITHUB_WORKSPACE}/scripts/automation/automation-core.mjs`)
+            const policy = await import(`${process.env.TRUSTED_POLICY}/scripts/automation/automation-core.mjs`)
             const { owner, repo } = context.repo
             const issueNumber = Number(process.env.LINKED_ISSUE || 0)
             const pullNumber = Number(process.env.PULL_NUMBER)

@@ -84,12 +84,19 @@ export async function checkResultsForRef(github, { owner, repo, ref }) {
     listAllCheckRuns(github, { owner, repo, ref }),
     listAllStatuses(github, { owner, repo, ref }),
   ])
+  // startedAt is carried through so evaluateRequiredChecks can tell a retry
+  // from the run it replaced. Two runs of the same check on one SHA are normal
+  // now: a Claude branch push and the pull-request synchronize it causes both
+  // produce one.
   return [
-    ...runs.map((run) => ({ name: run.name, status: run.status, conclusion: run.conclusion })),
+    ...runs.map((run) => ({
+      name: run.name, status: run.status, conclusion: run.conclusion, startedAt: run.started_at,
+    })),
     ...statuses.map((status) => ({
       name: status.context,
       status: 'completed',
       conclusion: status.state === 'success' ? 'success' : status.state,
+      startedAt: status.updated_at,
     })),
   ]
 }

@@ -10,6 +10,10 @@
 /blob-report
 /playwright/.cache
 
+# automation: the runner-only clone of main that decision steps import their
+# policy from. Never part of a commit.
+/.trusted-policy/
+
 # next.js
 /.next/
 /out/

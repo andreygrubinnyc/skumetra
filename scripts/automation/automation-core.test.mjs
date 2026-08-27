@@ -23,6 +23,49 @@ const REQUIRED = [
 ]
 const ok = (name) => ({ name, status: 'completed', conclusion: 'success' })
 
+/** Vitest runs from the package root; import.meta.url is not a file URL here. */
+const read = (p) => readFileSync(join(process.cwd(), p), 'utf8')
+
+/**
+ * Splits a workflow into [jobName, jobBody] pairs.
+ *
+ * Regex rather than a YAML parser on purpose: this repository deliberately
+ * keeps its workflow checks dependency-free, and the properties asserted below
+ * are textual ones — which ref a checkout names, which module path an import
+ * resolves against.
+ */
+function jobsOf(yaml) {
+  const lines = yaml.split('\n')
+  const starts = []
+  lines.forEach((line, i) => {
+    const m = line.match(/^ {2}([A-Za-z_][A-Za-z0-9_-]*):\s*$/)
+    if (m && !/^ {2}(on|jobs|permissions|concurrency|env|defaults)\s*:/.test(line)) starts.push([m[1], i])
+  })
+  const jobsLine = lines.findIndex((l) => /^jobs:\s*$/.test(l))
+  return starts
+    .filter(([, i]) => i > jobsLine)
+    .map(([name, i], idx, all) => {
+      const end = idx + 1 < all.length ? all[idx + 1][1] : lines.length
+      return [name, lines.slice(i, end).join('\n')]
+    })
+}
+
+/** Splits a job body into its steps. */
+function stepsOf(jobBody) {
+  return jobBody.split(/\n(?= {6}- name: )/).slice(1)
+}
+
+/** The `ref` and `path` a checkout step names, or null if it is not one. */
+function checkoutOf(step) {
+  if (!/uses:\s*actions\/checkout@/.test(step)) return null
+  return {
+    ref: step.match(/^\s*ref:\s*(\S+)\s*$/m)?.[1] ?? null,
+    path: step.match(/^\s*path:\s*(\S+)\s*$/m)?.[1] ?? null,
+  }
+}
+
+const POLICY_MODULE_RE = /\$\{process\.env\.([A-Z_]+)\}\/scripts\/automation\/(?:automation-core|github-api|review-gate)\.mjs/g
+
 describe('actor authorisation', () => {
   it.each(['write', 'maintain', 'admin'])('allows %s permission', (permission) => {
     expect(authorizeActor({ permission, actor: 'andreygrubinnyc' }).ok).toBe(true)
@@ -448,7 +491,6 @@ describe('read-only production smoke decisions', () => {
 
 describe('the issue template and the guards agree', () => {
   // Vitest runs from the package root; import.meta.url is not a file URL here.
-  const read = (p) => readFileSync(join(process.cwd(), p), 'utf8')
 
   it('rejects the exact classification string the task form produces', () => {
     const template = read('.github/ISSUE_TEMPLATE/claude-task.yml')
@@ -497,12 +539,29 @@ describe('the issue template and the guards agree', () => {
     expect(yaml).not.toContain('pull_request_target')
   })
 
-  it('does not request OIDC and supports either official static credential', () => {
+  it('uses the Claude GitHub App for Git identity and either static Anthropic credential', () => {
+    // Anthropic authentication and GitHub identity are separate things. Either
+    // official Anthropic credential is accepted; the GitHub identity is always
+    // the App, never the repository token.
     const yaml = read('.github/workflows/claude-issue-to-pr.yml')
     expect(yaml).toContain('anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}')
     expect(yaml).toContain('claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}')
-    expect(yaml).not.toContain('id-token: write')
     expect(yaml).toContain('if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]')
+    // With no github_token input, setupGitHubToken() takes the OIDC route and
+    // exchanges the token for a Claude GitHub App installation token. Passing
+    // GITHUB_TOKEN would short-circuit that and its pushes would start no CI.
+    expect(yaml).not.toContain('github_token: ${{ secrets.GITHUB_TOKEN }}')
+  })
+
+  it('grants id-token only to the jobs that call the Claude Action', () => {
+    for (const file of ['claude-issue-to-pr.yml', 'claude-approved-merge.yml']) {
+      for (const [name, body] of jobsOf(read(`.github/workflows/${file}`))) {
+        const wantsOidc = body.includes('anthropics/claude-code-action@')
+        const grantsOidc = /^\s*id-token:\s*write/m.test(body)
+        expect(grantsOidc, `${file}:${name} — id-token: write belongs only on Claude Action jobs`)
+          .toBe(wantsOidc)
+      }
+    }
   })
 
   it('consumes start authority and checks every continue-on-error Claude result', () => {
@@ -519,12 +578,23 @@ describe('the issue template and the guards agree', () => {
     expect(yaml).toContain('Attempts:\\n2')
   })
 
-  it('runs Dependency review for PRs and exact main pushes', () => {
+  it('runs Dependency review for PRs, exact main pushes and Claude task branches', () => {
     const yaml = read('.github/workflows/dependency-review.yml')
     expect(yaml).toContain('pull_request:')
-    expect(yaml).toContain('branches: [main]')
-    expect(yaml).toContain('base-ref: ${{ github.event.before }}')
+    expect(yaml).toContain("branches: [main, 'claude/issue-*']")
+    expect(yaml).toContain('base-ref: ${{ steps.refs.outputs.base }}')
     expect(yaml).toContain('head-ref: ${{ github.sha }}')
+    // A task branch is compared with main, not with its own previous tip: a
+    // dependency added by an earlier commit on the branch must not slip past.
+    expect(yaml).toContain('base=main')
+  })
+
+  it('puts every required check on the pushed Claude branch SHA', () => {
+    // The pull request cannot trigger them — it is opened with GITHUB_TOKEN,
+    // whose events GitHub suppresses — so the App's push has to.
+    for (const file of ['ci.yml', 'codeql.yml', 'dependency-review.yml']) {
+      expect(read(`.github/workflows/${file}`), file).toContain("branches: [main, 'claude/issue-*']")
+    }
   })
 
   it('keeps production verification read-only and covers every public route', () => {
@@ -532,6 +602,108 @@ describe('the issue template and the guards agree', () => {
     for (const route of ['/api/version', '/pilot', '/privacy', '/terms']) expect(smoke).toContain(route)
     expect(smoke).toContain('www redirects to the apex domain')
     expect(smoke).not.toMatch(/method:\s*['"]POST['"]/)
+  })
+})
+
+describe('policy is never read from the change it is judging', () => {
+  // The model may hold Write on the pull-request branch. The deterministic code
+  // that decides whether that branch passes may not come from it.
+  const WORKFLOWS = ['claude-issue-to-pr.yml', 'claude-approved-merge.yml']
+
+  const analyse = (file) =>
+    jobsOf(read(`.github/workflows/${file}`)).map(([name, body]) => {
+      const steps = stepsOf(body)
+      const checkouts = steps.map(checkoutOf).filter(Boolean)
+      const importing = steps
+        .map((step, index) => ({ step, index, bases: [...step.matchAll(POLICY_MODULE_RE)].map((m) => m[1]) }))
+        .filter((entry) => entry.bases.length > 0)
+      return { file, name, steps, checkouts, importing }
+    })
+
+  const jobs = WORKFLOWS.flatMap(analyse)
+  const deciding = jobs.filter((job) => job.importing.length > 0)
+
+  it('finds the jobs that make decisions', () => {
+    // Guards the guard: if this drops to nothing the assertions below pass
+    // vacuously and would never notice a regression again.
+    expect(deciding.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it.each(jobs.filter((j) => j.importing.length).map((j) => [`${j.file}:${j.name}`, j]))(
+    '%s has a checkout to import its policy from',
+    (_label, job) => {
+      // The failure this exists for: a terminal-decision job with no checkout
+      // at all, whose import of automation-core.mjs throws ERR_MODULE_NOT_FOUND
+      // on its first line, so no pull request can ever be labelled.
+      expect(job.checkouts.length).toBeGreaterThan(0)
+    },
+  )
+
+  it.each(jobs.filter((j) => j.importing.length).map((j) => [`${j.file}:${j.name}`, j]))(
+    '%s imports policy only from a checkout of main',
+    (_label, job) => {
+      const trustedClone = job.checkouts.some((c) => c.ref === 'main' && c.path === '.trusted-policy')
+      const workspaceIsMain =
+        job.checkouts.length > 0 && job.checkouts.every((c) => c.ref === 'main' && c.path === null)
+
+      for (const entry of job.importing) {
+        for (const base of entry.bases) {
+          if (base === 'TRUSTED_POLICY') {
+            expect(trustedClone, `${job.name}: no "ref: main" checkout at .trusted-policy`).toBe(true)
+            expect(entry.step, `${job.name}: step does not declare TRUSTED_POLICY`)
+              .toContain('TRUSTED_POLICY: ${{ github.workspace }}/.trusted-policy')
+          } else if (base === 'GITHUB_WORKSPACE') {
+            // Only legitimate when the entire workspace is main and nothing the
+            // model wrote can be in it.
+            expect(workspaceIsMain, `${job.name}: imports from a workspace that is not exclusively main`)
+              .toBe(true)
+          } else {
+            throw new Error(`${job.name}: policy imported from an unrecognised base "${base}"`)
+          }
+        }
+      }
+    },
+  )
+
+  it('re-clones the trusted policy after every model step, not once per job', () => {
+    // Claude can write anywhere in the workspace between two gate steps,
+    // including into .trusted-policy. A clone taken once at the top of the job
+    // could therefore be edited by the change it is about to judge;
+    // actions/checkout replaces the directory, so each decision reads main as
+    // main actually is.
+    for (const job of deciding) {
+      for (const entry of job.importing) {
+        if (!entry.bases.includes('TRUSTED_POLICY')) continue
+        let seenTrustedCheckout = false
+        for (let i = entry.index - 1; i >= 0; i--) {
+          const step = job.steps[i]
+          const checkout = checkoutOf(step)
+          if (checkout && checkout.path === '.trusted-policy' && checkout.ref === 'main') {
+            seenTrustedCheckout = true
+            break
+          }
+          if (/uses:\s*anthropics\/claude-code-action@/.test(step)) break
+        }
+        expect(seenTrustedCheckout, `${job.file}:${job.name}: a model step runs after the last trusted clone`)
+          .toBe(true)
+      }
+    }
+  })
+
+  it('never checks out a pull-request branch in a job that also decides', () => {
+    for (const job of deciding) {
+      const modelRefs = job.checkouts.filter((c) => c.ref !== 'main' && c.path === null)
+      for (const checkout of modelRefs) {
+        // A non-main primary checkout is only acceptable alongside a trusted
+        // clone that the decisions actually import from.
+        const trustedClone = job.checkouts.some((c) => c.ref === 'main' && c.path === '.trusted-policy')
+        expect(trustedClone, `${job.file}:${job.name} checks out ${checkout.ref} with no trusted clone`).toBe(true)
+        for (const entry of job.importing) {
+          expect(entry.bases, `${job.file}:${job.name} decides from the checked-out branch`)
+            .not.toContain('GITHUB_WORKSPACE')
+        }
+      }
+    }
   })
 })
 
