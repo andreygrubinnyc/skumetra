@@ -192,7 +192,7 @@ jobs:
         id: claude-new
         if: needs.guard.outputs.mode == 'start'
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -209,7 +209,7 @@ jobs:
         id: claude-resume
         if: needs.guard.outputs.mode != 'start'
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         env:
           CLAUDE_BRANCH: ${{ needs.guard.outputs.branch }}
         with:
@@ -423,7 +423,7 @@ jobs:
       - name: Independent planner, QA, security and scope review
         id: internal-review
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         env:
           CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
         with:
@@ -503,7 +503,7 @@ jobs:
         id: remediate-1
         if: steps.gate-1.outputs.decision == 'remediate'
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         env:
           CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
         with:
@@ -523,7 +523,7 @@ jobs:
         id: review-remediation-1
         if: steps.remediate-1.outcome == 'success'
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         env:
           CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
         with:
@@ -590,7 +590,7 @@ jobs:
         id: remediate-2
         if: steps.gate-2.outputs.decision == 'remediate'
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         env:
           CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
         with:
@@ -610,7 +610,7 @@ jobs:
         id: review-remediation-2
         if: steps.remediate-2.outcome == 'success'
         continue-on-error: true
-        uses: anthropics/claude-code-action@1f291e1cfe0f5fc21db2aef19af844591600ade7 # v1.0.206
+        uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         env:
           CLAUDE_BRANCH: ${{ needs.implement.outputs.branch }}
         with:
